@@ -91,35 +91,76 @@ export class OcrSpaceProvider implements OcrProvider {
 
   constructor(private readonly apiKey: string) {}
 
-  async recognize(image: Buffer, mimeType: string): Promise<OcrResult> {
+  private buildForm(image: Buffer, mimeType: string, engine: string): FormData {
     const form = new FormData();
-    const blob = new Blob([new Uint8Array(image)], { type: mimeType });
-    form.append("file", blob, `sheet.${mimeType.split("/")[1] ?? "png"}`);
-    form.append("apikey", this.apiKey);
+    const base64 = image.toString("base64");
+    form.append("base64Image", `data:${mimeType};base64,${base64}`);
     form.append("language", "eng");
     form.append("isOverlayRequired", "true");
     form.append("detectOrientation", "true");
     form.append("scale", "true");
-    form.append("OCREngine", "2");
+    form.append("OCREngine", engine);
+    form.append("filetype", mimeType === "image/png" ? "PNG" : "JPG");
+    return form;
+  }
 
+  private async request(
+    image: Buffer,
+    mimeType: string,
+    engine: string,
+  ): Promise<OcrSpaceResponse> {
     const response = await fetch("https://api.ocr.space/parse/image", {
       method: "POST",
-      body: form,
+      headers: {
+        apikey: this.apiKey,
+      },
+      body: this.buildForm(image, mimeType, engine),
     });
+
+    const rawText = await response.text();
+    let data: OcrSpaceResponse;
+
+    try {
+      data = JSON.parse(rawText) as OcrSpaceResponse;
+    } catch {
+      if (response.status === 403) {
+        throw new Error(
+          "OCR.space 요청 한도 초과(403) 또는 API 키 문제입니다. 키를 다시 확인하거나 내일 다시 시도해 주세요.",
+        );
+      }
+      throw new Error(`OCR.space HTTP ${response.status}: ${rawText.slice(0, 120)}`);
+    }
+
+    if (response.status === 403) {
+      throw new Error(
+        "OCR.space 요청 한도 초과(403)입니다. Vercel 서버 IP의 일일 한도(500회)일 수 있습니다. 잠시 후 다시 시도해 주세요.",
+      );
+    }
 
     if (!response.ok) {
       throw new Error(`OCR.space HTTP ${response.status}`);
     }
 
-    const data = (await response.json()) as OcrSpaceResponse;
+    return data;
+  }
+
+  async recognize(image: Buffer, mimeType: string): Promise<OcrResult> {
+    let data = await this.request(image, mimeType, "1");
 
     if (data.IsErroredOnProcessing || data.OCRExitCode !== 1) {
-      const message = Array.isArray(data.ErrorMessage)
-        ? data.ErrorMessage.join(", ")
-        : data.ErrorMessage ??
-          data.ParsedResults?.[0]?.ErrorMessage ??
-          "OCR processing failed";
-      throw new Error(message);
+      const firstError = formatOcrSpaceError(data);
+      if (/invalid free api key|e550/i.test(firstError)) {
+        throw new Error(
+          "OCR.space API 키가 유효하지 않습니다. ocr.space에서 새 키를 발급받아 Vercel 환경 변수를 업데이트해 주세요.",
+        );
+      }
+
+      // Engine 1 failed for other reasons — retry once with engine 2.
+      data = await this.request(image, mimeType, "2");
+    }
+
+    if (data.IsErroredOnProcessing || data.OCRExitCode !== 1) {
+      throw new Error(formatOcrSpaceError(data));
     }
 
     const parsed = data.ParsedResults?.[0];
@@ -141,6 +182,15 @@ export class OcrSpaceProvider implements OcrProvider {
       rawText: parsed.ParsedText ?? "",
     };
   }
+}
+
+function formatOcrSpaceError(data: OcrSpaceResponse): string {
+  const message = Array.isArray(data.ErrorMessage)
+    ? data.ErrorMessage.join(", ")
+    : data.ErrorMessage ??
+      data.ParsedResults?.[0]?.ErrorMessage ??
+      "OCR processing failed";
+  return typeof message === "string" ? message : "OCR processing failed";
 }
 
 export function createOcrProvider(name: string, apiKey: string): OcrProvider {

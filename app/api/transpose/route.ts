@@ -11,7 +11,7 @@ const MAX_BYTES = 1024 * 1024; // OCR.space free tier: 1 MB
 
 export async function POST(request: NextRequest) {
   try {
-    const apiKey = process.env.OCR_SPACE_API_KEY;
+    const apiKey = process.env.OCR_SPACE_API_KEY?.trim();
     if (!apiKey) {
       return NextResponse.json(
         { error: "OCR_SPACE_API_KEY 환경 변수가 설정되지 않았습니다." },
