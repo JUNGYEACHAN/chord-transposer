@@ -10,6 +10,7 @@ import {
   scaleOcrWordsToOriginal,
 } from "../images/preprocess-for-ocr";
 import { createOcrProvider } from "./index";
+import { recognizeTiledImage } from "./tiled-recognize";
 import type { OcrWord } from "./types";
 
 function mergeHighlights(
@@ -47,6 +48,7 @@ function mergeHighlights(
 export interface SheetAnalysisResult {
   provider: string;
   engine: string;
+  tileCount: number;
   imageWidth: number;
   imageHeight: number;
   words: OcrWord[];
@@ -57,27 +59,40 @@ export interface SheetAnalysisResult {
   rawText: string;
 }
 
-async function recognizeBestEngine(
+async function recognizeWithBestEngine(
   provider: ReturnType<typeof createOcrProvider>,
-  buffer: Buffer,
-  mimeType: string,
-): Promise<{ result: Awaited<ReturnType<typeof provider.recognize>>; engine: string }> {
+  preprocessed: Awaited<ReturnType<typeof preprocessForOcr>>,
+): Promise<{
+  words: OcrWord[];
+  imageWidth: number;
+  imageHeight: number;
+  rawText: string;
+  engine: string;
+  tileCount: number;
+}> {
   const engines = ["2", "1"] as const;
-  let best: Awaited<ReturnType<typeof provider.recognize>> | null = null;
+  let best: Awaited<ReturnType<typeof recognizeTiledImage>> | null = null;
   let bestEngine = "2";
   let bestScore = -1;
 
   for (const engine of engines) {
     try {
-      const result = await provider.recognize(buffer, mimeType, engine);
-      const chordWords = selectChordOcrWords(result.words);
+      const result = await recognizeTiledImage(provider, preprocessed, engine);
+      const chordWords = selectChordOcrWords(
+        scaleOcrWordsToOriginal(
+          result.words,
+          preprocessed,
+          result.imageWidth,
+          result.imageHeight,
+        ),
+      );
       const score = chordWords.length * 10 + result.words.length;
       if (score > bestScore) {
         best = result;
         bestEngine = engine;
         bestScore = score;
       }
-      if (chordWords.length >= 2) break;
+      if (chordWords.length >= 4) break;
     } catch {
       /* try next engine */
     }
@@ -87,7 +102,14 @@ async function recognizeBestEngine(
     throw new Error("OCR.space에서 텍스트를 읽지 못했습니다.");
   }
 
-  return { result: best, engine: bestEngine };
+  return {
+    words: best.words,
+    imageWidth: best.imageWidth,
+    imageHeight: best.imageHeight,
+    rawText: best.rawText,
+    engine: bestEngine,
+    tileCount: best.tileCount,
+  };
 }
 
 export interface AnalyzeSheetOptions {
@@ -104,17 +126,13 @@ export async function analyzeLeadSheetImage(
 ): Promise<SheetAnalysisResult> {
   const preprocessed = await preprocessForOcr(imageBuffer);
   const provider = createOcrProvider("ocr-space", apiKey);
-  const { result: ocrResult, engine } = await recognizeBestEngine(
-    provider,
-    preprocessed.buffer,
-    preprocessed.mimeType,
-  );
+  const ocrPass = await recognizeWithBestEngine(provider, preprocessed);
 
   const words = scaleOcrWordsToOriginal(
-    ocrResult.words,
+    ocrPass.words,
     preprocessed,
-    ocrResult.imageWidth,
-    ocrResult.imageHeight,
+    ocrPass.imageWidth,
+    ocrPass.imageHeight,
   );
 
   const chordWords = selectChordOcrWords(words);
@@ -137,8 +155,9 @@ export async function analyzeLeadSheetImage(
   );
 
   return {
-    provider: ocrResult.provider,
-    engine,
+    provider: "ocr-space",
+    engine: ocrPass.engine,
+    tileCount: ocrPass.tileCount,
     imageWidth: preprocessed.originalWidth,
     imageHeight: preprocessed.originalHeight,
     words,
@@ -146,6 +165,6 @@ export async function analyzeLeadSheetImage(
     highlights,
     chords,
     wordCount: words.length,
-    rawText: ocrResult.rawText,
+    rawText: ocrPass.rawText,
   };
 }

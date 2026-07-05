@@ -19,6 +19,7 @@ import type { OcrWord } from "@/lib/ocr/types";
 interface AnalyzeResponse {
   provider: string;
   ocrEngine: string;
+  tileCount: number;
   imageWidth: number;
   imageHeight: number;
   semitones: number;
@@ -28,6 +29,8 @@ interface AnalyzeResponse {
   chordWordCount: number;
   ocrWords: OcrWord[];
   method: string;
+  successRecordId?: string | null;
+  successSaved?: boolean;
   error?: string;
 }
 
@@ -162,6 +165,8 @@ export default function TransposerApp() {
       formData.append("fromKey", fromKey);
       formData.append("toKey", toKey);
       formData.append("preferFlats", String(preferFlats));
+      if (imageHash) formData.append("imageHash", imageHash);
+      formData.append("fileName", file.name);
 
       const response = await fetch("/api/analyze-chords", {
         method: "POST",
@@ -414,9 +419,10 @@ export default function TransposerApp() {
 
         {analysis && (
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            OCR.space 엔진 {analysis.ocrEngine} · OCR 단어 {analysis.wordCount}개 ·
-            코드 후보 {analysis.chordWordCount}개 · 파란 표시{" "}
-            {highlights.length}개 · 병합 코드 {editableChords.length}개
+            OCR.space 엔진 {analysis.ocrEngine} · 타일 {analysis.tileCount}개 · OCR
+            단어 {analysis.wordCount}개 · 코드 후보 {analysis.chordWordCount}개 ·
+            파란 표시 {highlights.length}개 · 병합 코드 {editableChords.length}개
+            {analysis.successSaved && " · 성공 사례 Turso 저장됨"}
           </p>
         )}
 

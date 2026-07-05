@@ -48,6 +48,26 @@ async function ensureSchema(): Promise<void> {
       ON correction_records(image_hash)`,
     `CREATE INDEX IF NOT EXISTS idx_correction_records_created_at
       ON correction_records(created_at)`,
+    `CREATE TABLE IF NOT EXISTS success_records (
+      id TEXT PRIMARY KEY,
+      image_hash TEXT NOT NULL,
+      file_name TEXT,
+      from_key TEXT NOT NULL,
+      to_key TEXT NOT NULL,
+      semitones INTEGER NOT NULL,
+      ocr_provider TEXT,
+      ocr_engine TEXT,
+      tile_count INTEGER,
+      word_count INTEGER,
+      chord_count INTEGER NOT NULL,
+      ocr_words_json TEXT NOT NULL,
+      chords_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_success_records_image_hash
+      ON success_records(image_hash)`,
+    `CREATE INDEX IF NOT EXISTS idx_success_records_created_at
+      ON success_records(created_at)`,
   ]);
 }
 

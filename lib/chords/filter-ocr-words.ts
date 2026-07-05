@@ -7,8 +7,11 @@ interface OcrLine {
   avgTop: number;
 }
 
-const LYRIC_HINT =
-  /\b(sing|little|louder|bridge|chorus|verse|intro|outro|the|and|with|your|my|we|you)\b/i;
+const LYRIC_WORD =
+  /^(sing|little|louder|the|and|with|your|my|we|you|at|in|on|a|to|of|it|is|be|he|she|me|so|do|no|up|if)$/i;
+
+const SECTION_LABEL =
+  /^(bridge|chorus|verse|intro|outro|pre-chorus|tag)\d*$/i;
 
 function groupIntoLines(words: OcrWord[]): OcrLine[] {
   const sorted = [...words].sort((a, b) => a.top - b.top || a.left - b.left);
@@ -30,7 +33,11 @@ function groupIntoLines(words: OcrWord[]): OcrLine[] {
   return lines;
 }
 
-function isLyricLine(line: OcrLine): boolean {
+function isSectionLabelToken(text: string): boolean {
+  return SECTION_LABEL.test(normalizeOcrText(text));
+}
+
+function isPureLyricLine(line: OcrLine): boolean {
   const joined = line.words.map((word) => word.text).join(" ");
   if (/[\u3131-\uD79D]/.test(joined)) return true;
 
@@ -38,37 +45,38 @@ function isLyricLine(line: OcrLine): boolean {
     .map((word) => normalizeOcrText(word.text))
     .filter(Boolean);
 
-  if (normalized.length >= 4 && LYRIC_HINT.test(joined)) return true;
-
-  const nonChord = normalized.filter(
-    (token) => !isChordLikeToken(token) && token.length > 2,
-  );
-  return normalized.length >= 5 && nonChord.length >= 3;
-}
-
-function isChordLine(line: OcrLine): boolean {
-  if (isLyricLine(line)) return false;
-
-  const normalized = line.words
-    .map((word) => normalizeOcrText(word.text))
-    .filter(Boolean);
-
-  if (normalized.length === 0) return false;
+  if (normalized.length < 4) return false;
 
   const chordLike = normalized.filter((token) => isChordLikeToken(token)).length;
-  if (chordLike === 0) return false;
+  if (chordLike > 0) return false;
 
-  return chordLike / normalized.length >= 0.34 || (normalized.length <= 2 && chordLike >= 1);
+  const lyricLike = normalized.filter(
+    (token) => LYRIC_WORD.test(token) || (token.length > 3 && !isChordLikeToken(token)),
+  ).length;
+
+  return lyricLike >= 3;
+}
+
+function isChordToken(word: OcrWord): boolean {
+  const normalized = normalizeOcrText(word.text);
+  if (!normalized || isSectionLabelToken(normalized)) return false;
+  return isChordLikeToken(normalized);
 }
 
 /** Keep OCR tokens likely to belong to chord rows (not lyrics or section labels). */
 export function selectChordOcrWords(words: OcrWord[]): OcrWord[] {
   const lines = groupIntoLines(words);
-  const chordLines = lines.filter(isChordLine);
+  const selected: OcrWord[] = [];
 
-  if (chordLines.length > 0) {
-    return chordLines.flatMap((line) => line.words);
+  for (const line of lines) {
+    const chordWords = line.words.filter(isChordToken);
+    if (chordWords.length === 0) continue;
+    if (isPureLyricLine(line)) continue;
+
+    selected.push(...chordWords);
   }
 
-  return words.filter((word) => isChordLikeToken(normalizeOcrText(word.text)));
+  if (selected.length > 0) return selected;
+
+  return words.filter(isChordToken);
 }

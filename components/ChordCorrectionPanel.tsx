@@ -112,8 +112,8 @@ export default function ChordCorrectionPanel({
           코드 수정 · 학습 저장
         </h2>
         <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          OCR이 틀린 코드를 고치면 Turso에 저장되어 이후 개선에 활용할 수
-          있습니다. 위치 정보가 없는 추가 코드는 미리보기에는 그려지지 않습니다.
+          OCR이 틀린 코드를 고치면 Turso에 저장됩니다. 분석에 성공하면 자동으로
+          성공 사례도 저장됩니다.
         </p>
       </div>
 
