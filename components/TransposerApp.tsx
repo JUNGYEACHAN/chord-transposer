@@ -218,6 +218,15 @@ export default function TransposerApp() {
       return;
     }
 
+    if (zoneDetection.bands.length === 0) {
+      setError(
+        zoneDetection.method === "no-staff-found"
+          ? "오선을 찾지 못했습니다. 더 선명한 악보 이미지를 사용해 주세요."
+          : "코드 줄을 찾지 못했습니다. 코드가 없는 줄은 OCR 영역에서 제외됩니다.",
+      );
+      return;
+    }
+
     setAnalyzing(true);
     setError(null);
     setAnalysis(null);
@@ -493,7 +502,7 @@ export default function TransposerApp() {
           <button
             type="button"
             onClick={handleAnalyze}
-            disabled={analyzing || !file || !zoneDetection}
+            disabled={analyzing || !file || !zoneDetection || zoneDetection.bands.length === 0}
             className="rounded-xl bg-zinc-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-400 dark:bg-zinc-100 dark:text-zinc-900 dark:disabled:bg-zinc-600"
           >
             {analyzing ? "코드 영역 OCR 중..." : "1. 코드 영역 분석"}
@@ -511,12 +520,12 @@ export default function TransposerApp() {
         {zoneDetection && (
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             오선 {zoneDetection.staffCount}개 · 코드 줄 {zoneDetection.chordRowCount}
-            행 · OCR 영역 {zoneDetection.bands.length}구간 ·{" "}
-            {zoneDetection.method === "full-page-fallback"
-              ? "코드 줄 미감지 → 전체 페이지"
-              : zoneDetection.method === "staff-assisted"
-                ? "오선+희소텍스트 분석"
-                : "희소텍스트 행 분석"}
+            /{zoneDetection.staffCount} ·{" "}
+            {zoneDetection.method === "staff-anchored"
+              ? "오선 바로 위 코드 줄만 OCR"
+              : zoneDetection.method === "no-chords-found"
+                ? "코드 줄 없음 (OCR 영역 0)"
+                : "오선 미감지"}
           </p>
         )}
 

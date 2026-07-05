@@ -1,12 +1,16 @@
 /**
- * Chord zone detector — finds horizontal bands that look like chord symbol rows.
+ * Chord-row detector (staff-anchored).
  *
- * Strategy (does NOT use "top N%" of the page):
- * 1. Classify every scan row: staff-line | dense-text (lyrics) | sparse-text (chords) | empty
- * 2. Locate real staff systems (5 tight long horizontal lines)
- * 3. Mark staff + lyric rows as excluded
- * 4. Collect sparse-text rows + the strip above each staff across the FULL image height
- * 5. Cluster nearby rows into separate OCR bands (never merge distant bands)
+ * Lead sheet layout per system:
+ *   [chord row]  ← ONLY this becomes an OCR band (if ink found)
+ *   [5-line staff + notes]  ← never OCR
+ *   [lyrics]  ← never OCR
+ *
+ * Rules:
+ * - One band max per staff system, strictly above staff.top
+ * - No band if the chord strip is empty (e.g. intro line with no chords)
+ * - Never merge bands across different staves
+ * - No full-page or top-percent fallback
  */
 
 import type { ChordZoneBand, StaffSystem } from "./lead-sheet";
@@ -27,9 +31,10 @@ export interface RowProfile {
 
 export interface ChordZoneDetectionResult {
   bands: ChordZoneBand[];
-  method: "row-sparse" | "staff-assisted" | "full-page-fallback";
+  method: "staff-anchored" | "no-staff-found" | "no-chords-found";
   staffCount: number;
   staffSystems: StaffSystem[];
+  /** Staff systems that had a chord band created */
   chordRowCount: number;
 }
 
@@ -76,17 +81,19 @@ function classifyRow(row: Omit<RowProfile, "kind">): RowKind {
 
   if (inkRatio < 0.007) return "empty";
 
-  if (longestRunRatio >= 0.44 && inkRatio <= 0.24) return "staff-line";
+  if (longestRunRatio >= 0.38 && inkRatio <= 0.28) return "staff-line";
+
+  if (inkRatio >= 0.04 && longestRunRatio >= 0.06 && longestRunRatio <= 0.34) {
+    return "dense-text";
+  }
 
   if (
-    longestRunRatio <= 0.14 &&
-    inkRatio >= 0.01 &&
-    inkRatio <= 0.28
+    longestRunRatio <= 0.11 &&
+    inkRatio >= 0.012 &&
+    inkRatio <= 0.24
   ) {
     return "sparse-text";
   }
-
-  if (inkRatio >= 0.035 && longestRunRatio <= 0.36) return "dense-text";
 
   return "unknown";
 }
@@ -118,7 +125,19 @@ function clusterStaffLineRows(
   let group: number[] = [lineYs[0]];
 
   const flush = () => {
-    if (group.length >= 3 && group[group.length - 1] - group[0] <= maxStaffHeight) {
+    if (
+      group.length >= 4 &&
+      group[group.length - 1] - group[0] <= maxStaffHeight
+    ) {
+      systems.push({
+        top: group[0],
+        bottom: group[group.length - 1],
+        lineCount: group.length,
+      });
+    } else if (
+      group.length >= 3 &&
+      group[group.length - 1] - group[0] <= maxStaffHeight * 0.85
+    ) {
       systems.push({
         top: group[0],
         bottom: group[group.length - 1],
@@ -149,11 +168,15 @@ function detectStaffSystems(
   height: number,
 ): StaffSystem[] {
   const lineYs = profiles
-    .filter((row) => row.kind === "staff-line")
+    .filter(
+      (row) =>
+        row.kind === "staff-line" ||
+        (row.longestRunRatio >= 0.42 && row.inkRatio <= 0.22),
+    )
     .map((row) => row.y);
 
-  const maxLineGap = Math.max(10, Math.round(height * 0.008));
-  const maxStaffHeight = Math.max(55, Math.round(height * 0.045));
+  const maxLineGap = Math.max(9, Math.round(height * 0.007));
+  const maxStaffHeight = Math.max(42, Math.round(height * 0.038));
 
   const raw = clusterStaffLineRows(lineYs, maxLineGap, maxStaffHeight);
   const sorted = [...raw].sort((a, b) => a.top - b.top);
@@ -161,7 +184,7 @@ function detectStaffSystems(
 
   for (const system of sorted) {
     const overlaps = kept.some(
-      (k) => system.top <= k.bottom + 8 && system.bottom >= k.top - 8,
+      (k) => system.top <= k.bottom + 6 && system.bottom >= k.top - 6,
     );
     if (!overlaps) kept.push(system);
   }
@@ -169,51 +192,27 @@ function detectStaffSystems(
   return kept;
 }
 
-function markExcludedRows(
-  profiles: RowProfile[],
-  staffSystems: StaffSystem[],
-  height: number,
-): boolean[] {
-  const excluded = new Array<boolean>(height).fill(false);
-  const noteExtension = Math.max(32, Math.round(height * 0.028));
-  const lyricScanDepth = Math.max(100, Math.round(height * 0.09));
+function isChordInkRow(row: RowProfile): boolean {
+  if (row.kind === "empty") return false;
+  if (row.kind === "staff-line") return false;
+  if (row.kind === "dense-text") return false;
 
-  for (let s = 0; s < staffSystems.length; s++) {
-    const staff = staffSystems[s];
-    const nextTop =
-      s + 1 < staffSystems.length
-        ? staffSystems[s + 1].top
-        : Math.min(height, staff.bottom + lyricScanDepth * 2);
+  if (row.longestRunRatio >= 0.28) return false;
 
-    for (let y = Math.max(0, staff.top - 2); y <= staff.bottom + noteExtension; y++) {
-      excluded[y] = true;
-    }
-
-    const lyricEnd = Math.min(nextTop - 4, staff.bottom + lyricScanDepth);
-    for (let y = staff.bottom + noteExtension + 1; y < lyricEnd; y++) {
-      if (profiles[y]?.kind === "dense-text") {
-        excluded[y] = true;
-        for (let pad = -2; pad <= 2; pad++) {
-          const py = y + pad;
-          if (py >= 0 && py < height) excluded[py] = true;
-        }
-      }
-    }
+  if (
+    row.inkRatio >= 0.038 &&
+    row.longestRunRatio >= 0.07 &&
+    row.longestRunRatio <= 0.32
+  ) {
+    return false;
   }
-
-  return excluded;
-}
-
-function isChordCandidateRow(row: RowProfile, excluded: boolean[]): boolean {
-  if (excluded[row.y]) return false;
 
   if (row.kind === "sparse-text") return true;
 
   if (
-    row.kind === "unknown" &&
-    row.inkRatio >= 0.008 &&
+    row.inkRatio >= 0.012 &&
     row.inkRatio <= 0.22 &&
-    row.longestRunRatio <= 0.18
+    row.longestRunRatio <= 0.1
   ) {
     return true;
   }
@@ -221,114 +220,47 @@ function isChordCandidateRow(row: RowProfile, excluded: boolean[]): boolean {
   return false;
 }
 
-function collectChordRowYs(
+function detectChordBandAboveStaff(
   profiles: RowProfile[],
-  staffSystems: StaffSystem[],
-  excluded: boolean[],
-  height: number,
-): number[] {
-  const ys = new Set<number>();
-  const aboveStaffWindow = Math.max(72, Math.round(height * 0.075));
-
-  for (const row of profiles) {
-    if (isChordCandidateRow(row, excluded)) {
-      ys.add(row.y);
-    }
-  }
-
-  for (const staff of staffSystems) {
-    const winTop = Math.max(0, staff.top - aboveStaffWindow);
-    for (let y = winTop; y < staff.top - 1; y++) {
-      const row = profiles[y];
-      if (!row || excluded[y]) continue;
-      if (row.kind === "dense-text" || row.kind === "staff-line") continue;
-      if (row.inkRatio >= 0.008) ys.add(y);
-    }
-  }
-
-  if (staffSystems.length > 0) {
-    const last = staffSystems[staffSystems.length - 1];
-    const footerStart = last.bottom + Math.max(36, Math.round(height * 0.03));
-    for (let y = footerStart; y < height; y++) {
-      const row = profiles[y];
-      if (!row || excluded[y]) continue;
-      if (row.kind === "dense-text") continue;
-      if (row.inkRatio >= 0.008 && row.longestRunRatio <= 0.22) ys.add(y);
-    }
-  }
-
-  return [...ys].sort((a, b) => a - b);
-}
-
-function clusterRowsToBands(
-  rowYs: number[],
+  staff: StaffSystem,
   width: number,
-  maxRowGap: number,
-): ChordZoneBand[] {
-  if (rowYs.length === 0) return [];
+  height: number,
+): ChordZoneBand | null {
+  const gapAboveStaff = Math.max(4, Math.round(height * 0.004));
+  const windowHeight = Math.max(48, Math.round(height * 0.055));
 
-  const bands: ChordZoneBand[] = [];
-  let groupStart = rowYs[0];
-  let groupEnd = rowYs[0];
+  const windowBottom = staff.top - gapAboveStaff;
+  const windowTop = Math.max(0, windowBottom - windowHeight);
 
-  const flush = () => {
-    const pad = 5;
-    const top = Math.max(0, groupStart - pad);
-    const bottom = groupEnd + pad;
-    bands.push({
-      left: 0,
-      top,
-      width,
-      height: Math.max(14, bottom - top + 1),
-      kind: "above-staff",
-    });
-  };
+  if (windowBottom <= windowTop) return null;
 
-  for (let i = 1; i < rowYs.length; i++) {
-    const y = rowYs[i];
-    if (y - groupEnd <= maxRowGap) {
-      groupEnd = y;
-    } else {
-      flush();
-      groupStart = y;
-      groupEnd = y;
+  const chordRows: number[] = [];
+  for (let y = windowTop; y <= windowBottom; y++) {
+    const row = profiles[y];
+    if (row && isChordInkRow(row)) {
+      chordRows.push(y);
     }
   }
-  flush();
 
-  return bands;
-}
+  if (chordRows.length === 0) return null;
 
-function inferBandKinds(
-  bands: ChordZoneBand[],
-  staffSystems: StaffSystem[],
-  height: number,
-): ChordZoneBand[] {
-  if (staffSystems.length === 0) return bands;
+  const peakInk = Math.max(...chordRows.map((y) => profiles[y].inkRatio));
+  if (chordRows.length < 2 && peakInk < 0.02) return null;
 
-  const firstStaffTop = staffSystems[0].top;
-  const lastStaffBottom = staffSystems[staffSystems.length - 1].bottom;
+  const pad = 3;
+  const top = Math.max(windowTop, chordRows[0] - pad);
+  const bottom = Math.min(windowBottom, chordRows[chordRows.length - 1] + pad);
 
-  return bands.map((band) => {
-    const center = band.top + band.height / 2;
+  const safeBottom = Math.min(bottom, staff.top - gapAboveStaff);
+  if (safeBottom <= top) return null;
 
-    if (center < firstStaffTop - 8) {
-      return { ...band, kind: "header" as const };
-    }
-    if (center > lastStaffBottom + Math.max(40, height * 0.03)) {
-      return { ...band, kind: "below-last-staff" as const };
-    }
-
-    for (let i = 0; i < staffSystems.length - 1; i++) {
-      const gapStart = staffSystems[i].bottom;
-      const gapEnd = staffSystems[i + 1].top;
-      if (center > gapStart && center < gapEnd) {
-        return { ...band, kind: "between-systems" as const };
-      }
-    }
-
-    return { ...band, kind: "above-staff" as const };
-  });
+  return {
+    left: 0,
+    top,
+    width,
+    height: safeBottom - top + 1,
+    kind: "above-staff",
+  };
 }
 
 export function detectChordZonesFromImageData(
@@ -338,39 +270,30 @@ export function detectChordZonesFromImageData(
 ): ChordZoneDetectionResult {
   const profiles = buildRowProfiles(data, width, height);
   const staffSystems = detectStaffSystems(profiles, height);
-  const excluded = markExcludedRows(profiles, staffSystems, height);
-  const chordRowYs = collectChordRowYs(
-    profiles,
-    staffSystems,
-    excluded,
-    height,
-  );
 
-  const maxRowGap = Math.max(18, Math.round(height * 0.014));
-  let bands = clusterRowsToBands(chordRowYs, width, maxRowGap);
-  bands = inferBandKinds(bands, staffSystems, height);
+  if (staffSystems.length === 0) {
+    return {
+      bands: [],
+      method: "no-staff-found",
+      staffCount: 0,
+      staffSystems: [],
+      chordRowCount: 0,
+    };
+  }
 
-  let method: ChordZoneDetectionResult["method"] = "row-sparse";
-  if (staffSystems.length > 0) method = "staff-assisted";
-  if (bands.length === 0) {
-    bands = [
-      {
-        left: 0,
-        top: 0,
-        width,
-        height,
-        kind: "full-page",
-      },
-    ];
-    method = "full-page-fallback";
+  const bands: ChordZoneBand[] = [];
+
+  for (const staff of staffSystems) {
+    const band = detectChordBandAboveStaff(profiles, staff, width, height);
+    if (band) bands.push(band);
   }
 
   return {
     bands,
-    method,
+    method: bands.length > 0 ? "staff-anchored" : "no-chords-found",
     staffCount: staffSystems.length,
     staffSystems,
-    chordRowCount: chordRowYs.length,
+    chordRowCount: bands.length,
   };
 }
 
@@ -409,16 +332,8 @@ export async function detectChordZonesFromImage(
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     return {
-      bands: [
-        {
-          left: 0,
-          top: 0,
-          width: image.naturalWidth,
-          height: image.naturalHeight,
-          kind: "full-page",
-        },
-      ],
-      method: "full-page-fallback",
+      bands: [],
+      method: "no-staff-found",
       staffCount: 0,
       staffSystems: [],
       chordRowCount: 0,
