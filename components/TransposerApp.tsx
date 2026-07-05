@@ -127,15 +127,16 @@ export default function TransposerApp() {
   const redrawAnalysisCanvas = useCallback(
     async (nextHighlights: ChordHighlight[] = highlights) => {
       const canvas = analysisCanvasRef.current;
-      if (!canvas || !previewUrl) return;
+      if (!canvas || !previewUrl || !zoneDetection) return;
 
       const image = await loadImage(previewUrl);
       drawAnalysisPreview(canvas, image, {
-        bands: zoneDetection?.bands,
+        bands: zoneDetection.bands,
         highlights: nextHighlights,
+        staffSystems: zoneDetection.staffSystems,
       });
     },
-    [highlights, previewUrl, zoneDetection?.bands],
+    [highlights, previewUrl, zoneDetection],
   );
 
   useEffect(() => {
@@ -155,7 +156,10 @@ export default function TransposerApp() {
 
         const canvas = analysisCanvasRef.current;
         if (canvas) {
-          drawAnalysisPreview(canvas, image, { bands: detection.bands });
+          drawAnalysisPreview(canvas, image, {
+            bands: detection.bands,
+            staffSystems: detection.staffSystems,
+          });
         }
       } catch {
         /* zone preview is best-effort */
@@ -281,6 +285,7 @@ export default function TransposerApp() {
         drawAnalysisPreview(canvas, image, {
           bands: zoneDetection.bands,
           highlights: scaledHighlights,
+          staffSystems: zoneDetection.staffSystems,
         });
       }
     } catch (err) {
@@ -505,11 +510,11 @@ export default function TransposerApp() {
 
         {zoneDetection && (
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            코드 영역 {zoneDetection.bands.length}구간 · 오선{" "}
-            {zoneDetection.staffCount > 0
-              ? `${zoneDetection.staffCount}개 감지`
-              : "미감지(상단 35% 사용)"}{" "}
-            · 방식: {zoneDetection.method}
+            오선 {zoneDetection.staffCount}개 · 코드 OCR 영역{" "}
+            {zoneDetection.bands.length}구간
+            {zoneDetection.method === "full-page-fallback"
+              ? " (오선 미감지 → 전체 페이지)"
+              : " (헤더·오선 위·오선 사이·하단 포함)"}
           </p>
         )}
 
@@ -534,6 +539,10 @@ export default function TransposerApp() {
               분석 미리보기
             </h2>
             <div className="flex flex-wrap gap-3 text-xs text-zinc-500 dark:text-zinc-400">
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block h-3 w-3 rounded border border-dashed border-red-500/60 bg-red-200/30" />
+                감지된 오선
+              </span>
               <span className="inline-flex items-center gap-1">
                 <span className="inline-block h-3 w-3 rounded border-2 border-dashed border-amber-600 bg-amber-200/40" />
                 코드 OCR 영역
