@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { drawTransposedSheet, scaleChordsToImage } from "@/lib/chords/draw";
 import type { DetectedChord } from "@/lib/chords/types";
 import { KEY_OPTIONS } from "@/lib/chords/types";
 import { isImageFile, validateImageFile } from "@/lib/images/validate";
@@ -35,66 +36,6 @@ async function resizeImageIfNeeded(file: File, maxBytes: number): Promise<File> 
   return new File([blob], file.name.replace(/\.\w+$/, ".jpg"), {
     type: "image/jpeg",
   });
-}
-
-function scaleChordsToImage(
-  chords: DetectedChord[],
-  ocrWidth: number,
-  ocrHeight: number,
-  imageWidth: number,
-  imageHeight: number,
-): DetectedChord[] {
-  if (ocrWidth <= 0 || ocrHeight <= 0) return chords;
-
-  const scaleX = imageWidth / ocrWidth;
-  const scaleY = imageHeight / ocrHeight;
-
-  if (Math.abs(scaleX - 1) < 0.001 && Math.abs(scaleY - 1) < 0.001) {
-    return chords;
-  }
-
-  return chords.map((chord) => ({
-    ...chord,
-    bbox: {
-      left: Math.round(chord.bbox.left * scaleX),
-      top: Math.round(chord.bbox.top * scaleY),
-      width: Math.round(chord.bbox.width * scaleX),
-      height: Math.round(chord.bbox.height * scaleY),
-    },
-  }));
-}
-
-function drawTransposedSheet(
-  canvas: HTMLCanvasElement,
-  image: HTMLImageElement,
-  chords: DetectedChord[],
-) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-
-  canvas.width = image.naturalWidth;
-  canvas.height = image.naturalHeight;
-  ctx.drawImage(image, 0, 0);
-
-  for (const chord of chords) {
-    const { left, top, width, height } = chord.bbox;
-    const padX = 4;
-    const padY = 3;
-    const fontSize = Math.max(12, Math.round(height * 1.05));
-
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(
-      left - padX,
-      top - padY,
-      width + padX * 2,
-      height + padY * 2,
-    );
-
-    ctx.fillStyle = "#111111";
-    ctx.font = `600 ${fontSize}px Arial, Helvetica, sans-serif`;
-    ctx.textBaseline = "top";
-    ctx.fillText(chord.transposed, left, top);
-  }
 }
 
 function pickImageFile(fileList: FileList | null): File | null {
@@ -282,7 +223,8 @@ export default function TransposerApp() {
       <header className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Chord Transposer</h1>
         <p className="text-zinc-600">
-          악보 이미지에서 코드를 읽어 키 변조 후 새 코드를 그려 줍니다.
+          악보 이미지에서 코드만 읽어 키 변조 후, 원래 위치에 새 코드를 그려
+          PNG로 저장합니다. 오선·음표는 그대로 둡니다.
         </p>
       </header>
 
@@ -404,16 +346,19 @@ export default function TransposerApp() {
               <button
                 type="button"
                 onClick={handleDownload}
-                className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium"
+                className="w-full rounded-lg bg-zinc-900 px-3 py-2.5 text-sm font-semibold text-white"
               >
-                PNG 다운로드
+                변조된 악보 PNG 다운로드
               </button>
+              <p className="text-xs text-zinc-500">
+                오른쪽 미리보기와 동일한 이미지가 저장됩니다.
+              </p>
             </div>
           )}
         </div>
 
         <div className="space-y-2">
-          <p className="text-sm font-medium text-zinc-700">미리보기</p>
+          <p className="text-sm font-medium text-zinc-700">변조 결과 미리보기</p>
           <div className="overflow-auto rounded-xl border border-zinc-200 bg-zinc-50 p-2">
             {previewUrl ? (
               <canvas ref={canvasRef} className="max-w-full" />

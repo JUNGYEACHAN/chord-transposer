@@ -24,6 +24,20 @@ const BLACKLIST = new Set([
   "to",
   "verse",
   "you",
+  "at",
+  "in",
+  "on",
+  "is",
+  "be",
+  "we",
+  "he",
+  "she",
+  "me",
+  "so",
+  "do",
+  "no",
+  "up",
+  "if",
 ]);
 
 export function normalizeOcrText(text: string): string {

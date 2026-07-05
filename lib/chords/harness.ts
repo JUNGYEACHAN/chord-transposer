@@ -1,9 +1,17 @@
 import type { OcrWord } from "../ocr/types";
 import type { BoundingBox, DetectedChord } from "./types";
-import { isLikelyChord, normalizeOcrText, parseChordSymbol } from "./parser";
+import {
+  isLikelyChord,
+  normalizeOcrText,
+  parseChordSymbol,
+} from "./parser";
 import { transposeChord } from "./transpose";
 
-const SECTION_PATTERN = /^(bridge|chorus|verse|intro|outro)\s?\d*$/i;
+const SECTION_PATTERN = /^(bridge|chorus|verse|intro|outro|pre-chorus|tag)\s?\d*$/i;
+
+/** Tokens that can continue a split OCR chord, e.g. F# + sus4, B + /D# */
+const CHORD_FRAGMENT =
+  /^#|b$|^\/[A-G][#b]?$|^(m|maj|min|dim|aug|sus\d*|add\d*|M\d*|\d+)$/i;
 
 interface LineGroup {
   words: OcrWord[];
@@ -16,7 +24,7 @@ function groupWordsIntoLines(words: OcrWord[]): LineGroup[] {
 
   for (const word of sorted) {
     const last = lines[lines.length - 1];
-    const threshold = Math.max(word.height * 0.6, 8);
+    const threshold = Math.max(word.height * 0.75, 10);
 
     if (last && Math.abs(word.top - last.avgTop) <= threshold) {
       last.words.push(word);
@@ -30,15 +38,39 @@ function groupWordsIntoLines(words: OcrWord[]): LineGroup[] {
   return lines;
 }
 
-function mergeLineToCandidates(line: OcrWord[]): Array<{ text: string; bbox: BoundingBox; confidence: number }> {
+function isChordFragment(text: string): boolean {
+  return CHORD_FRAGMENT.test(text);
+}
+
+function shouldMergeChordTokens(
+  current: string,
+  next: string,
+  gap: number,
+  height: number,
+): boolean {
+  const maxGap = Math.max(height * 1.8, 18);
+  if (gap > maxGap) return false;
+
+  const combined = current + next;
+  if (isLikelyChord(combined)) return true;
+  if (isChordFragment(next)) return true;
+  if (/^[A-G]$/.test(current) && (next === "#" || next === "b")) return true;
+
+  return false;
+}
+
+function mergeLineToCandidates(
+  line: OcrWord[],
+): Array<{ text: string; bbox: BoundingBox; confidence: number }> {
   const sorted = [...line].sort((a, b) => a.left - b.left);
-  const candidates: Array<{ text: string; bbox: BoundingBox; confidence: number }> = [];
+  const tokens: Array<{ text: string; bbox: BoundingBox; confidence: number }> =
+    [];
 
   for (const word of sorted) {
     const text = normalizeOcrText(word.text);
     if (!text || SECTION_PATTERN.test(text)) continue;
 
-    candidates.push({
+    tokens.push({
       text,
       bbox: {
         left: word.left,
@@ -50,31 +82,29 @@ function mergeLineToCandidates(line: OcrWord[]): Array<{ text: string; bbox: Bou
     });
   }
 
-  // Merge adjacent tokens on the same line (e.g. "F#" + "sus4")
-  const merged: typeof candidates = [];
-  for (let i = 0; i < candidates.length; i++) {
-    let text = candidates[i].text;
-    let bbox = { ...candidates[i].bbox };
-    let confidence = candidates[i].confidence;
+  const merged: typeof tokens = [];
+  for (let i = 0; i < tokens.length; i++) {
+    let text = tokens[i].text;
+    let bbox = { ...tokens[i].bbox };
+    let confidence = tokens[i].confidence;
 
-    while (i + 1 < candidates.length) {
-      const next = candidates[i + 1];
+    while (i + 1 < tokens.length) {
+      const next = tokens[i + 1];
       const gap = next.bbox.left - (bbox.left + bbox.width);
-      const combined = text + next.text;
 
-      if (gap <= Math.max(bbox.height, 12) && isLikelyChord(combined)) {
-        bbox = {
-          left: bbox.left,
-          top: Math.min(bbox.top, next.bbox.top),
-          width: next.bbox.left + next.bbox.width - bbox.left,
-          height: Math.max(bbox.height, next.bbox.height),
-        };
-        text = combined;
-        confidence = Math.min(confidence, next.confidence);
-        i++;
-      } else {
+      if (!shouldMergeChordTokens(text, next.text, gap, bbox.height)) {
         break;
       }
+
+      bbox = {
+        left: bbox.left,
+        top: Math.min(bbox.top, next.bbox.top),
+        width: next.bbox.left + next.bbox.width - bbox.left,
+        height: Math.max(bbox.height, next.bbox.height),
+      };
+      text += next.text;
+      confidence = Math.min(confidence, next.confidence);
+      i++;
     }
 
     merged.push({ text, bbox, confidence });
@@ -84,21 +114,18 @@ function mergeLineToCandidates(line: OcrWord[]): Array<{ text: string; bbox: Bou
 }
 
 export interface HarnessOptions {
-  /** Fraction of image height treated as the chord zone (top portion). */
-  chordZoneRatio?: number;
   semitones?: number;
   preferFlats?: boolean;
 }
 
+/** Scan all OCR words (full page), left-to-right and top-to-bottom. */
 export function extractChordsFromOcr(
   words: OcrWord[],
-  imageHeight: number,
+  _imageHeight: number,
   options: HarnessOptions = {},
 ): DetectedChord[] {
-  const { chordZoneRatio = 0.42, semitones = 0, preferFlats = false } = options;
-  const chordZoneMaxY = imageHeight * chordZoneRatio;
-  const chordWords = words.filter((w) => w.top <= chordZoneMaxY);
-  const lines = groupWordsIntoLines(chordWords);
+  const { semitones = 0, preferFlats = false } = options;
+  const lines = groupWordsIntoLines(words);
   const detected: DetectedChord[] = [];
 
   for (const line of lines) {
@@ -142,10 +169,9 @@ function dedupeOverlappingChords(chords: DetectedChord[]): DetectedChord[] {
       continue;
     }
     if (chord.original.length > duplicate.original.length) {
-      const index = kept.indexOf(duplicate);
-      kept[index] = chord;
+      kept[kept.indexOf(duplicate)] = chord;
     }
   }
 
-  return kept;
+  return kept.sort((a, b) => a.bbox.top - b.bbox.top || a.bbox.left - b.bbox.left);
 }
