@@ -4,12 +4,14 @@
 
 ## 기능
 
-- OCR.space API로 악보 이미지 텍스트 인식
+- **오선 감지 → 코드 영역만 OCR** (가사·오선 제외, 효율 향상)
+- OCR.space API로 코드 영역 텍스트 인식
+- **코드로 보이는 글자 파란색 하이라이트** + OCR 영역 주황 점선 표시
 - 코드 문법 하네스 (C#m, B/D#, F#sus4, Adim 등)
-- 원래 키 → 목표 키 변조
+- 2단계: ① 코드 분석 → ② 키 변조
 - Canvas로 원래 위치에 새 코드 그리기 & PNG 다운로드
 - **원본·결과 나란히 대조** 및 코드 수정 UI
-- **Turso**에 수정 내용 저장 (OCR 학습 데이터 축적)
+- **Turso**에 수정 내용 저장
 - OCR Provider 교체 가능 구조 (`lib/ocr`)
 
 ## 사전 준비
@@ -44,15 +46,17 @@ npm run dev
 
 ```
 app/
-  api/transpose/route.ts   # OCR + 코드 추출 + 변조 API
-  api/corrections/route.ts # Turso에 수정 내용 저장
+  api/analyze-chords/route.ts # 코드 영역 OCR + 하이라이트
+  api/transpose/route.ts     # (레거시) 전체 OCR + 변조
+  api/corrections/route.ts   # Turso에 수정 내용 저장
   page.tsx                 # 메인 UI
 components/
   TransposerApp.tsx        # 업로드, 키 선택, 대조, 수정
   SheetComparison.tsx      # 원본·결과 나란히 보기
   ChordCorrectionPanel.tsx # 코드 수정 및 Turso 저장
 lib/
-  chords/                  # 코드 파서, 하네스, 변조 규칙
+  chords/                  # 코드 파서, 하네스, 변조, 하이라이트
+  images/                  # 오선 감지, 코드 영역 마스킹
   db/                      # Turso 클라이언트 및 저장
   ocr/                     # OCR Provider (ocr-space)
 ```

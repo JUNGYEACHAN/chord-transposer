@@ -1,4 +1,77 @@
+import type { ChordHighlight } from "./highlights";
 import type { DetectedChord } from "./types";
+import type { ChordZoneBand } from "../images/chord-zone";
+
+/** Draw detected chord-zone bands (amber) for review before OCR. */
+export function drawChordZoneBands(
+  ctx: CanvasRenderingContext2D,
+  bands: ChordZoneBand[],
+) {
+  for (const band of bands) {
+    ctx.fillStyle = "rgba(245, 158, 11, 0.12)";
+    ctx.fillRect(band.left, band.top, band.width, band.height);
+    ctx.strokeStyle = "rgba(217, 119, 6, 0.85)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 6]);
+    ctx.strokeRect(band.left + 1, band.top + 1, band.width - 2, band.height - 2);
+    ctx.setLineDash([]);
+  }
+}
+
+/** Highlight chord-like OCR tokens in blue on the sheet. */
+export function drawChordHighlights(
+  ctx: CanvasRenderingContext2D,
+  highlights: ChordHighlight[],
+) {
+  for (const item of highlights) {
+    const { left, top, width, height } = item.bbox;
+    const pad = 2;
+
+    ctx.fillStyle = item.isParsedChord
+      ? "rgba(59, 130, 246, 0.38)"
+      : "rgba(96, 165, 250, 0.28)";
+    ctx.fillRect(
+      left - pad,
+      top - pad,
+      width + pad * 2,
+      height + pad * 2,
+    );
+
+    ctx.strokeStyle = item.isParsedChord
+      ? "rgba(29, 78, 216, 0.95)"
+      : "rgba(37, 99, 235, 0.75)";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(
+      left - pad,
+      top - pad,
+      width + pad * 2,
+      height + pad * 2,
+    );
+  }
+}
+
+export function drawAnalysisPreview(
+  canvas: HTMLCanvasElement,
+  image: HTMLImageElement,
+  options: {
+    bands?: ChordZoneBand[];
+    highlights?: ChordHighlight[];
+  } = {},
+) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  ctx.drawImage(image, 0, 0);
+
+  if (options.bands?.length) {
+    drawChordZoneBands(ctx, options.bands);
+  }
+  if (options.highlights?.length) {
+    drawChordHighlights(ctx, options.highlights);
+  }
+}
 
 /** Draw transposed chord labels over the original sheet at OCR bounding boxes. */
 export function drawTransposedSheet(
