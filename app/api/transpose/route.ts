@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { extractChordsFromOcr } from "@/lib/chords/harness";
 import { semitonesBetweenKeys } from "@/lib/chords/transpose";
 import type { KeyRoot } from "@/lib/chords/types";
+import { resolveImageMimeType } from "@/lib/images/validate";
 import { createOcrProvider } from "@/lib/ocr";
 
 export const maxDuration = 60;
 
-const ALLOWED_TYPES = new Set(["image/jpeg", "image/jpg", "image/png"]);
 const MAX_BYTES = 1024 * 1024; // OCR.space free tier: 1 MB
 
 export async function POST(request: NextRequest) {
@@ -29,7 +29,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!ALLOWED_TYPES.has(file.type)) {
+    const mimeType = resolveImageMimeType(file);
+    if (!mimeType) {
       return NextResponse.json(
         { error: "JPEG 또는 PNG 이미지만 지원합니다." },
         { status: 400 },
@@ -57,7 +58,7 @@ export async function POST(request: NextRequest) {
     }
 
     const provider = createOcrProvider(providerName, apiKey);
-    const ocrResult = await provider.recognize(buffer, file.type);
+    const ocrResult = await provider.recognize(buffer, mimeType);
     const chords = extractChordsFromOcr(ocrResult.words, ocrResult.imageHeight, {
       semitones,
       preferFlats,

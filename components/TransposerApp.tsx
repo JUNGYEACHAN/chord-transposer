@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DetectedChord } from "@/lib/chords/types";
 import { KEY_OPTIONS } from "@/lib/chords/types";
+import { isImageFile, validateImageFile } from "@/lib/images/validate";
 
 interface TransposeResponse {
   provider: string;
@@ -34,6 +35,33 @@ async function resizeImageIfNeeded(file: File, maxBytes: number): Promise<File> 
   return new File([blob], file.name.replace(/\.\w+$/, ".jpg"), {
     type: "image/jpeg",
   });
+}
+
+function scaleChordsToImage(
+  chords: DetectedChord[],
+  ocrWidth: number,
+  ocrHeight: number,
+  imageWidth: number,
+  imageHeight: number,
+): DetectedChord[] {
+  if (ocrWidth <= 0 || ocrHeight <= 0) return chords;
+
+  const scaleX = imageWidth / ocrWidth;
+  const scaleY = imageHeight / ocrHeight;
+
+  if (Math.abs(scaleX - 1) < 0.001 && Math.abs(scaleY - 1) < 0.001) {
+    return chords;
+  }
+
+  return chords.map((chord) => ({
+    ...chord,
+    bbox: {
+      left: Math.round(chord.bbox.left * scaleX),
+      top: Math.round(chord.bbox.top * scaleY),
+      width: Math.round(chord.bbox.width * scaleX),
+      height: Math.round(chord.bbox.height * scaleY),
+    },
+  }));
 }
 
 function drawTransposedSheet(
@@ -69,10 +97,24 @@ function drawTransposedSheet(
   }
 }
 
+function pickImageFile(fileList: FileList | null): File | null {
+  if (!fileList) return null;
+
+  for (const file of Array.from(fileList)) {
+    if (isImageFile(file)) return file;
+  }
+
+  return null;
+}
+
 export default function TransposerApp() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const previewUrlRef = useRef<string | null>(null);
+
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [fromKey, setFromKey] = useState("E");
   const [toKey, setToKey] = useState("D");
   const [preferFlats, setPreferFlats] = useState(false);
@@ -80,11 +122,16 @@ export default function TransposerApp() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<TransposeResponse | null>(null);
 
+  const revokePreviewUrl = useCallback(() => {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
+    return () => revokePreviewUrl();
+  }, [revokePreviewUrl]);
 
   useEffect(() => {
     if (!previewUrl) return;
@@ -107,19 +154,59 @@ export default function TransposerApp() {
     };
   }, [previewUrl]);
 
-  async function handleFileChange(selected: File | null) {
-    setError(null);
-    setResult(null);
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-
-    if (!selected) {
-      setFile(null);
-      setPreviewUrl(null);
+  function applyFile(selected: File) {
+    const validationError = validateImageFile(selected);
+    if (validationError) {
+      setError(validationError);
       return;
     }
 
+    setError(null);
+    setResult(null);
+    revokePreviewUrl();
+
+    const nextUrl = URL.createObjectURL(selected);
+    previewUrlRef.current = nextUrl;
     setFile(selected);
-    setPreviewUrl(URL.createObjectURL(selected));
+    setPreviewUrl(nextUrl);
+  }
+
+  function handleFileInputChange(selected: File | null) {
+    if (!selected) return;
+    applyFile(selected);
+  }
+
+  function handleDragEnter(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragging(true);
+  }
+
+  function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragging(true);
+  }
+
+  function handleDragLeave(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+    setIsDragging(false);
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragging(false);
+
+    const dropped = pickImageFile(event.dataTransfer.files);
+    if (!dropped) {
+      setError("JPEG 또는 PNG 이미지를 드롭해 주세요.");
+      return;
+    }
+
+    applyFile(dropped);
   }
 
   async function handleTranspose() {
@@ -135,7 +222,7 @@ export default function TransposerApp() {
     try {
       const prepared = await resizeImageIfNeeded(file, 1024 * 1024);
       const formData = new FormData();
-      formData.append("image", prepared);
+      formData.append("image", prepared, prepared.name);
       formData.append("fromKey", fromKey);
       formData.append("toKey", toKey);
       formData.append("preferFlats", String(preferFlats));
@@ -165,7 +252,15 @@ export default function TransposerApp() {
         image.onerror = () => reject(new Error("이미지를 불러오지 못했습니다."));
       });
 
-      drawTransposedSheet(canvas, image, data.chords);
+      const scaledChords = scaleChordsToImage(
+        data.chords,
+        data.imageWidth,
+        data.imageHeight,
+        image.naturalWidth,
+        image.naturalHeight,
+      );
+
+      drawTransposedSheet(canvas, image, scaledChords);
     } catch (err) {
       setError(err instanceof Error ? err.message : "알 수 없는 오류");
     } finally {
@@ -193,15 +288,50 @@ export default function TransposerApp() {
 
       <section className="grid gap-6 rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm md:grid-cols-2">
         <div className="space-y-4">
-          <label className="block space-y-2">
+          <div className="space-y-2">
             <span className="text-sm font-medium text-zinc-700">악보 이미지</span>
-            <input
-              type="file"
-              accept="image/png,image/jpeg"
-              className="block w-full text-sm"
-              onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
-            />
-          </label>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              onDragEnter={handleDragEnter}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={[
+                "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors",
+                isDragging
+                  ? "border-zinc-900 bg-zinc-100"
+                  : "border-zinc-300 bg-zinc-50 hover:border-zinc-400 hover:bg-zinc-100",
+              ].join(" ")}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,.png,.jpg,.jpeg"
+                className="hidden"
+                onChange={(event) => {
+                  handleFileInputChange(event.target.files?.[0] ?? null);
+                  event.target.value = "";
+                }}
+              />
+              <p className="text-sm font-medium text-zinc-800">
+                {isDragging
+                  ? "여기에 놓으세요"
+                  : "클릭하거나 이미지를 드래그해서 업로드"}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">JPEG, PNG · 최대 1MB</p>
+              {file && (
+                <p className="mt-3 truncate text-xs text-zinc-600">{file.name}</p>
+              )}
+            </div>
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <label className="space-y-1 text-sm">
@@ -285,11 +415,14 @@ export default function TransposerApp() {
         <div className="space-y-2">
           <p className="text-sm font-medium text-zinc-700">미리보기</p>
           <div className="overflow-auto rounded-xl border border-zinc-200 bg-zinc-50 p-2">
-            <canvas ref={canvasRef} className="max-w-full" />
-            {!previewUrl && (
-              <p className="p-8 text-center text-sm text-zinc-500">
-                이미지를 업로드하면 여기에 결과가 표시됩니다.
-              </p>
+            {previewUrl ? (
+              <canvas ref={canvasRef} className="max-w-full" />
+            ) : (
+              <div className="flex min-h-48 items-center justify-center p-8">
+                <p className="text-center text-sm text-zinc-500">
+                  이미지를 업로드하면 여기에 결과가 표시됩니다.
+                </p>
+              </div>
             )}
           </div>
         </div>
