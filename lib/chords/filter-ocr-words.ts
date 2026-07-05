@@ -1,6 +1,12 @@
 import type { OcrWord } from "../ocr/types";
 import { isChordLikeToken } from "./highlights";
+import {
+  createKeyFilter,
+  type KeyFilterContext,
+} from "./key-filter";
+import { isTokenCompatibleWithKey } from "./key-theory";
 import { normalizeOcrText } from "./parser";
+import type { KeyRoot } from "./types";
 
 interface OcrLine {
   words: OcrWord[];
@@ -57,19 +63,31 @@ function isPureLyricLine(line: OcrLine): boolean {
   return lyricLike >= 3;
 }
 
-function isChordToken(word: OcrWord): boolean {
+function isChordToken(word: OcrWord, keyFilter?: KeyFilterContext): boolean {
   const normalized = normalizeOcrText(word.text);
   if (!normalized || isSectionLabelToken(normalized)) return false;
-  return isChordLikeToken(normalized);
+  if (!isChordLikeToken(normalized)) return false;
+  if (keyFilter) {
+    return isTokenCompatibleWithKey(
+      normalized,
+      keyFilter.ctx,
+      keyFilter.vocabulary,
+    );
+  }
+  return true;
 }
 
 /** Keep OCR tokens likely to belong to chord rows (not lyrics or section labels). */
-export function selectChordOcrWords(words: OcrWord[]): OcrWord[] {
+export function selectChordOcrWords(
+  words: OcrWord[],
+  fromKey?: KeyRoot,
+): OcrWord[] {
+  const keyFilter = fromKey ? createKeyFilter(fromKey, "major") : undefined;
   const lines = groupIntoLines(words);
   const selected: OcrWord[] = [];
 
   for (const line of lines) {
-    const chordWords = line.words.filter(isChordToken);
+    const chordWords = line.words.filter((word) => isChordToken(word, keyFilter));
     if (chordWords.length === 0) continue;
     if (isPureLyricLine(line)) continue;
 
@@ -78,5 +96,5 @@ export function selectChordOcrWords(words: OcrWord[]): OcrWord[] {
 
   if (selected.length > 0) return selected;
 
-  return words.filter(isChordToken);
+  return words.filter((word) => isChordToken(word, keyFilter));
 }

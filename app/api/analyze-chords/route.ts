@@ -61,6 +61,7 @@ export async function POST(request: NextRequest) {
     const analysis = await analyzeLeadSheetImage(buffer, mimeType, apiKey, {
       semitones,
       preferFlats,
+      fromKey: fromKey || undefined,
     });
 
     let successRecordId: string | null = null;
@@ -103,6 +104,7 @@ export async function POST(request: NextRequest) {
       chordWordCount: analysis.chordWords.length,
       ocrWords: analysis.words,
       method: "ocr-space-full-page",
+      keyFilter: analysis.keyFilter ?? null,
       successRecordId,
       successSaved: Boolean(successRecordId),
     });

@@ -1,12 +1,16 @@
 import type { OcrWord } from "../ocr/types";
 import { extractVerticalStackChords } from "./cluster";
-import type { BoundingBox, DetectedChord } from "./types";
+import type { BoundingBox, DetectedChord, KeyRoot } from "./types";
 import {
   isLikelyChord,
   normalizeOcrText,
   parseChordSymbol,
 } from "./parser";
 import { transposeChord } from "./transpose";
+import {
+  applyKeyFilterToChords,
+  createKeyFilter,
+} from "./key-filter";
 
 const SECTION_PATTERN = /^(bridge|chorus|verse|intro|outro|pre-chorus|tag)\s?\d*$/i;
 
@@ -138,6 +142,7 @@ function extractHorizontalChords(
 export interface HarnessOptions {
   semitones?: number;
   preferFlats?: boolean;
+  fromKey?: KeyRoot;
 }
 
 /** Scan full page horizontally and vertically for chord symbols. */
@@ -146,7 +151,7 @@ export function extractChordsFromOcr(
   _imageHeight: number,
   options: HarnessOptions = {},
 ): DetectedChord[] {
-  const { semitones = 0, preferFlats = false } = options;
+  const { semitones = 0, preferFlats = false, fromKey } = options;
 
   const horizontal = extractHorizontalChords(words);
   const vertical = extractVerticalStackChords(words);
@@ -166,7 +171,16 @@ export function extractChordsFromOcr(
     });
   }
 
-  return dedupeOverlappingChords(detected);
+  const deduped = dedupeOverlappingChords(detected);
+
+  if (!fromKey) {
+    return deduped;
+  }
+
+  return applyKeyFilterToChords(deduped, createKeyFilter(fromKey, "major"), {
+    semitones,
+    preferFlats,
+  }).chords;
 }
 
 function overlapRatio(a: BoundingBox, b: BoundingBox): number {

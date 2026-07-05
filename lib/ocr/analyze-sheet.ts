@@ -1,10 +1,16 @@
 import { selectChordOcrWords } from "../chords/filter-ocr-words";
 import { extractChordsFromOcr } from "../chords/harness";
 import {
+  applyKeyFilterToChords,
+  applyKeyFilterToHighlights,
+  createKeyFilter,
+  type KeyFilterStats,
+} from "../chords/key-filter";
+import {
   extractChordHighlights,
   type ChordHighlight,
 } from "../chords/highlights";
-import type { DetectedChord } from "../chords/types";
+import type { DetectedChord, KeyRoot } from "../chords/types";
 import {
   preprocessForOcr,
   scaleOcrWordsToOriginal,
@@ -57,11 +63,13 @@ export interface SheetAnalysisResult {
   chords: DetectedChord[];
   wordCount: number;
   rawText: string;
+  keyFilter?: KeyFilterStats;
 }
 
 async function recognizeWithBestEngine(
   provider: ReturnType<typeof createOcrProvider>,
   preprocessed: Awaited<ReturnType<typeof preprocessForOcr>>,
+  fromKey?: KeyRoot,
 ): Promise<{
   words: OcrWord[];
   imageWidth: number;
@@ -85,6 +93,7 @@ async function recognizeWithBestEngine(
           result.imageWidth,
           result.imageHeight,
         ),
+        fromKey,
       );
       const score = chordWords.length * 10 + result.words.length;
       if (score > bestScore) {
@@ -115,6 +124,7 @@ async function recognizeWithBestEngine(
 export interface AnalyzeSheetOptions {
   semitones?: number;
   preferFlats?: boolean;
+  fromKey?: KeyRoot;
 }
 
 /** Full server-side pipeline: preprocess → OCR.space → chord extraction. */
@@ -126,7 +136,11 @@ export async function analyzeLeadSheetImage(
 ): Promise<SheetAnalysisResult> {
   const preprocessed = await preprocessForOcr(imageBuffer);
   const provider = createOcrProvider("ocr-space", apiKey);
-  const ocrPass = await recognizeWithBestEngine(provider, preprocessed);
+  const ocrPass = await recognizeWithBestEngine(
+    provider,
+    preprocessed,
+    options.fromKey,
+  );
 
   const words = scaleOcrWordsToOriginal(
     ocrPass.words,
@@ -135,12 +149,39 @@ export async function analyzeLeadSheetImage(
     ocrPass.imageHeight,
   );
 
-  const chordWords = selectChordOcrWords(words);
-  const wordHighlights = extractChordHighlights(chordWords);
-  const chords = extractChordsFromOcr(chordWords, preprocessed.originalHeight, {
-    semitones: options.semitones ?? 0,
-    preferFlats: options.preferFlats ?? false,
-  });
+  const chordWords = selectChordOcrWords(words, options.fromKey);
+  const keyFilter = options.fromKey
+    ? createKeyFilter(options.fromKey, "major")
+    : null;
+
+  const rawHighlights = extractChordHighlights(chordWords);
+  const chordsBeforeKey = extractChordsFromOcr(
+    chordWords,
+    preprocessed.originalHeight,
+    {
+      semitones: options.semitones ?? 0,
+      preferFlats: options.preferFlats ?? false,
+    },
+  );
+
+  let chords = chordsBeforeKey;
+  let wordHighlights = rawHighlights;
+  let keyFilterStats: KeyFilterStats | undefined;
+
+  if (keyFilter) {
+    wordHighlights = applyKeyFilterToHighlights(rawHighlights, keyFilter);
+    const filtered = applyKeyFilterToChords(chordsBeforeKey, keyFilter, {
+      semitones: options.semitones ?? 0,
+      preferFlats: options.preferFlats ?? false,
+    });
+    chords = filtered.chords;
+    keyFilterStats = {
+      ...filtered.stats,
+      rejectedTokens:
+        filtered.stats.rejectedTokens +
+        Math.max(0, rawHighlights.length - wordHighlights.length),
+    };
+  }
 
   const highlights = mergeHighlights(
     wordHighlights,
@@ -166,5 +207,6 @@ export async function analyzeLeadSheetImage(
     chords,
     wordCount: words.length,
     rawText: ocrPass.rawText,
+    keyFilter: keyFilterStats,
   };
 }

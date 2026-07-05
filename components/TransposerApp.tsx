@@ -31,6 +31,13 @@ interface AnalyzeResponse {
   method: string;
   successRecordId?: string | null;
   successSaved?: boolean;
+  keyFilter?: {
+    key: string;
+    mode: string;
+    vocabularySize: number;
+    rejectedTokens: number;
+    correctedChords: number;
+  } | null;
   error?: string;
 }
 
@@ -282,8 +289,8 @@ export default function TransposerApp() {
       <header className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Chord Transposer</h1>
         <p className="text-zinc-600 dark:text-zinc-400">
-          악보 이미지를 OCR.space API로 분석해 코드를 찾고, 파란색으로 표시한 뒤
-          키 변조를 적용합니다.
+          악보 이미지를 OCR.space로 분석합니다. 원래 키를 설정하면 해당 키에
+          맞는 코드만 후보로 삼아 오인식(예: A장조에서 Bb)을 줄입니다.
         </p>
       </header>
 
@@ -422,6 +429,8 @@ export default function TransposerApp() {
             OCR.space 엔진 {analysis.ocrEngine} · 타일 {analysis.tileCount}개 · OCR
             단어 {analysis.wordCount}개 · 코드 후보 {analysis.chordWordCount}개 ·
             파란 표시 {highlights.length}개 · 병합 코드 {editableChords.length}개
+            {analysis.keyFilter &&
+              ` · ${analysis.keyFilter.key}장조 후보 ${analysis.keyFilter.vocabularySize}개 (키外 ${analysis.keyFilter.rejectedTokens}개 제외${analysis.keyFilter.correctedChords > 0 ? `, ${analysis.keyFilter.correctedChords}개 보정` : ""})`}
             {analysis.successSaved && " · 성공 사례 Turso 저장됨"}
           </p>
         )}
