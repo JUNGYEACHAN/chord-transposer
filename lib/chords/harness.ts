@@ -1,4 +1,5 @@
 import type { OcrWord } from "../ocr/types";
+import { extractVerticalStackChords } from "./cluster";
 import type { BoundingBox, DetectedChord } from "./types";
 import {
   isLikelyChord,
@@ -24,7 +25,8 @@ function groupWordsIntoLines(words: OcrWord[]): LineGroup[] {
 
   for (const word of sorted) {
     const last = lines[lines.length - 1];
-    const threshold = Math.max(word.height * 0.75, 10);
+    // Wider threshold catches superscript # on the same logical line as the root.
+    const threshold = Math.max(word.height * 1.25, 14);
 
     if (last && Math.abs(word.top - last.avgTop) <= threshold) {
       last.words.push(word);
@@ -48,13 +50,14 @@ function shouldMergeChordTokens(
   gap: number,
   height: number,
 ): boolean {
-  const maxGap = Math.max(height * 1.8, 18);
+  const maxGap = Math.max(height * 2.2, 22);
   if (gap > maxGap) return false;
 
   const combined = current + next;
   if (isLikelyChord(combined)) return true;
   if (isChordFragment(next)) return true;
   if (/^[A-G]$/.test(current) && (next === "#" || next === "b")) return true;
+  if (/^[A-G][#b]?$/.test(current) && isChordFragment(next)) return true;
 
   return false;
 }
@@ -69,6 +72,7 @@ function mergeLineToCandidates(
   for (const word of sorted) {
     const text = normalizeOcrText(word.text);
     if (!text || SECTION_PATTERN.test(text)) continue;
+    if (/[\u3131-\uD79D]/.test(text)) continue;
 
     tokens.push({
       text,
@@ -113,33 +117,53 @@ function mergeLineToCandidates(
   return merged;
 }
 
+function extractHorizontalChords(
+  words: OcrWord[],
+): Array<{ text: string; bbox: BoundingBox; confidence: number }> {
+  const lines = groupWordsIntoLines(words);
+  const detected: Array<{ text: string; bbox: BoundingBox; confidence: number }> =
+    [];
+
+  for (const line of lines) {
+    for (const candidate of mergeLineToCandidates(line.words)) {
+      const parsed = parseChordSymbol(candidate.text);
+      if (!parsed) continue;
+      detected.push({ text: parsed, bbox: candidate.bbox, confidence: candidate.confidence });
+    }
+  }
+
+  return detected;
+}
+
 export interface HarnessOptions {
   semitones?: number;
   preferFlats?: boolean;
 }
 
-/** Scan all OCR words (full page), left-to-right and top-to-bottom. */
+/** Scan full page horizontally and vertically for chord symbols. */
 export function extractChordsFromOcr(
   words: OcrWord[],
   _imageHeight: number,
   options: HarnessOptions = {},
 ): DetectedChord[] {
   const { semitones = 0, preferFlats = false } = options;
-  const lines = groupWordsIntoLines(words);
+
+  const horizontal = extractHorizontalChords(words);
+  const vertical = extractVerticalStackChords(words);
+
+  const candidates = [...horizontal, ...vertical];
   const detected: DetectedChord[] = [];
 
-  for (const line of lines) {
-    for (const candidate of mergeLineToCandidates(line.words)) {
-      const parsed = parseChordSymbol(candidate.text);
-      if (!parsed) continue;
+  for (const candidate of candidates) {
+    const parsed = parseChordSymbol(candidate.text);
+    if (!parsed) continue;
 
-      detected.push({
-        original: parsed,
-        transposed: transposeChord(parsed, semitones, preferFlats),
-        bbox: candidate.bbox,
-        confidence: candidate.confidence,
-      });
-    }
+    detected.push({
+      original: parsed,
+      transposed: transposeChord(parsed, semitones, preferFlats),
+      bbox: candidate.bbox,
+      confidence: candidate.confidence,
+    });
   }
 
   return dedupeOverlappingChords(detected);
@@ -163,7 +187,7 @@ function dedupeOverlappingChords(chords: DetectedChord[]): DetectedChord[] {
   const kept: DetectedChord[] = [];
 
   for (const chord of chords) {
-    const duplicate = kept.find((k) => overlapRatio(k.bbox, chord.bbox) > 0.5);
+    const duplicate = kept.find((k) => overlapRatio(k.bbox, chord.bbox) > 0.45);
     if (!duplicate) {
       kept.push(chord);
       continue;

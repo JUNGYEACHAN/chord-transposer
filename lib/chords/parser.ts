@@ -48,7 +48,12 @@ export function normalizeOcrText(text: string): string {
     )
     .replace(/[|]/g, "/")
     .replace(/♯/g, "#")
-    .replace(/♭/g, "b");
+    .replace(/♭/g, "b")
+    .replace(/[`'""]/g, "")
+    // Superscript # misread as H (e.g. FHm7 → F#m7)
+    .replace(/^([A-G])H(?=m|sus|maj|min|dim|aug|\d|\/)/i, "$1#")
+    // Missing sharp: F7m → F#m7 (common OCR on bold labels)
+    .replace(/^([A-G])7m(\d*)$/i, "$1#m7$2");
 }
 
 export function isLikelyChord(text: string): boolean {
