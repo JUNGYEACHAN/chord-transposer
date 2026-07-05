@@ -1,6 +1,7 @@
 import type { ChordHighlight } from "./highlights";
 import type { DetectedChord } from "./types";
-import type { ChordZoneBand, StaffSystem } from "../images/chord-zone";
+import type { ChordZoneBand, StaffSystem } from "../images/lead-sheet";
+import type { ChordZoneDetectionResult } from "../images/detect-chord-zones";
 
 /** Outline detected staff systems for layout debugging. */
 export function drawStaffSystems(

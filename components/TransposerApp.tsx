@@ -510,11 +510,13 @@ export default function TransposerApp() {
 
         {zoneDetection && (
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            오선 {zoneDetection.staffCount}개 · 코드 OCR 영역{" "}
-            {zoneDetection.bands.length}구간
+            오선 {zoneDetection.staffCount}개 · 코드 줄 {zoneDetection.chordRowCount}
+            행 · OCR 영역 {zoneDetection.bands.length}구간 ·{" "}
             {zoneDetection.method === "full-page-fallback"
-              ? " (오선 미감지 → 전체 페이지)"
-              : " (헤더·오선 위·오선 사이·하단 포함)"}
+              ? "코드 줄 미감지 → 전체 페이지"
+              : zoneDetection.method === "staff-assisted"
+                ? "오선+희소텍스트 분석"
+                : "희소텍스트 행 분석"}
           </p>
         )}
 
