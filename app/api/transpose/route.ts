@@ -4,6 +4,7 @@ import { semitonesBetweenKeys } from "@/lib/chords/transpose";
 import type { KeyRoot } from "@/lib/chords/types";
 import { resolveImageMimeType } from "@/lib/images/validate";
 import { createOcrProvider } from "@/lib/ocr";
+import { normalizeOcrApiKey } from "@/lib/ocr/normalize-key";
 
 export const maxDuration = 60;
 
@@ -11,7 +12,7 @@ const MAX_BYTES = 1024 * 1024; // OCR.space free tier: 1 MB
 
 export async function POST(request: NextRequest) {
   try {
-    const apiKey = process.env.OCR_SPACE_API_KEY?.trim();
+    const apiKey = normalizeOcrApiKey(process.env.OCR_SPACE_API_KEY ?? "");
     if (!apiKey) {
       return NextResponse.json(
         { error: "OCR_SPACE_API_KEY 환경 변수가 설정되지 않았습니다." },

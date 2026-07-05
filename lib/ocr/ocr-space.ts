@@ -1,3 +1,4 @@
+import { normalizeOcrApiKey } from "./normalize-key";
 import type { OcrProvider, OcrResult, OcrWord } from "./types";
 
 interface OcrSpaceWord {
@@ -91,10 +92,15 @@ export class OcrSpaceProvider implements OcrProvider {
 
   constructor(private readonly apiKey: string) {}
 
+  private get key(): string {
+    return normalizeOcrApiKey(this.apiKey);
+  }
+
   private buildForm(image: Buffer, mimeType: string, engine: string): FormData {
     const form = new FormData();
     const base64 = image.toString("base64");
     form.append("base64Image", `data:${mimeType};base64,${base64}`);
+    form.append("apikey", this.key);
     form.append("language", "eng");
     form.append("isOverlayRequired", "true");
     form.append("detectOrientation", "true");
@@ -112,7 +118,7 @@ export class OcrSpaceProvider implements OcrProvider {
     const response = await fetch("https://api.ocr.space/parse/image", {
       method: "POST",
       headers: {
-        apikey: this.apiKey,
+        apikey: this.key,
       },
       body: this.buildForm(image, mimeType, engine),
     });
