@@ -120,21 +120,29 @@ export class OcrSpaceProvider implements OcrProvider {
     const rawText = await response.text();
     let data: OcrSpaceResponse;
 
-    try {
-      data = JSON.parse(rawText) as OcrSpaceResponse;
-    } catch {
-      if (response.status === 403) {
-        throw new Error(
-          "OCR.space 요청 한도 초과(403) 또는 API 키 문제입니다. 키를 다시 확인하거나 내일 다시 시도해 주세요.",
-        );
-      }
-      throw new Error(`OCR.space HTTP ${response.status}: ${rawText.slice(0, 120)}`);
-    }
-
     if (response.status === 403) {
+      try {
+        const errBody = JSON.parse(rawText) as { error?: string; details?: string };
+        const errMsg = errBody.error ?? "";
+        if (/e555|not valid|invalid.*api key/i.test(errMsg)) {
+          throw new Error(
+            "OCR.space API 키가 유효하지 않습니다. Vercel의 OCR_SPACE_API_KEY 값을 확인하거나 ocr.space에서 새 키를 발급받아 주세요.",
+          );
+        }
+      } catch (parseError) {
+        if (parseError instanceof Error && parseError.message.includes("API 키")) {
+          throw parseError;
+        }
+      }
       throw new Error(
         "OCR.space 요청 한도 초과(403)입니다. Vercel 서버 IP의 일일 한도(500회)일 수 있습니다. 잠시 후 다시 시도해 주세요.",
       );
+    }
+
+    try {
+      data = JSON.parse(rawText) as OcrSpaceResponse;
+    } catch {
+      throw new Error(`OCR.space HTTP ${response.status}: ${rawText.slice(0, 120)}`);
     }
 
     if (!response.ok) {
