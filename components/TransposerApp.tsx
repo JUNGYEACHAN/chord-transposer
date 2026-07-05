@@ -222,16 +222,18 @@ export default function TransposerApp() {
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-4 py-10">
       <header className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Chord Transposer</h1>
-        <p className="text-zinc-600">
+        <p className="text-zinc-600 dark:text-zinc-400">
           악보 이미지에서 코드만 읽어 키 변조 후, 원래 위치에 새 코드를 그려
           PNG로 저장합니다. 오선·음표는 그대로 둡니다.
         </p>
       </header>
 
-      <section className="grid gap-6 rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm md:grid-cols-2">
+      <section className="grid gap-6 rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:shadow-zinc-950/50 md:grid-cols-2">
         <div className="space-y-4">
           <div className="space-y-2">
-            <span className="text-sm font-medium text-zinc-700">악보 이미지</span>
+            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              악보 이미지
+            </span>
             <div
               role="button"
               tabIndex={0}
@@ -249,8 +251,8 @@ export default function TransposerApp() {
               className={[
                 "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors",
                 isDragging
-                  ? "border-zinc-900 bg-zinc-100"
-                  : "border-zinc-300 bg-zinc-50 hover:border-zinc-400 hover:bg-zinc-100",
+                  ? "border-zinc-900 bg-zinc-100 dark:border-zinc-400 dark:bg-zinc-800"
+                  : "border-zinc-300 bg-zinc-50 hover:border-zinc-400 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800/50 dark:hover:border-zinc-500 dark:hover:bg-zinc-800",
               ].join(" ")}
             >
               <input
@@ -263,25 +265,31 @@ export default function TransposerApp() {
                   event.target.value = "";
                 }}
               />
-              <p className="text-sm font-medium text-zinc-800">
+              <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
                 {isDragging
                   ? "여기에 놓으세요"
                   : "클릭하거나 이미지를 드래그해서 업로드"}
               </p>
-              <p className="mt-1 text-xs text-zinc-500">JPEG, PNG · 최대 1MB</p>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                JPEG, PNG · 최대 1MB
+              </p>
               {file && (
-                <p className="mt-3 truncate text-xs text-zinc-600">{file.name}</p>
+                <p className="mt-3 truncate text-xs text-zinc-600 dark:text-zinc-400">
+                  {file.name}
+                </p>
               )}
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <label className="space-y-1 text-sm">
-              <span className="font-medium text-zinc-700">원래 키</span>
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                원래 키
+              </span>
               <select
                 value={fromKey}
                 onChange={(e) => setFromKey(e.target.value)}
-                className="w-full rounded-lg border border-zinc-300 px-3 py-2"
+                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
               >
                 {KEY_OPTIONS.map((key) => (
                   <option key={`from-${key}`} value={key}>
@@ -291,11 +299,13 @@ export default function TransposerApp() {
               </select>
             </label>
             <label className="space-y-1 text-sm">
-              <span className="font-medium text-zinc-700">목표 키</span>
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                목표 키
+              </span>
               <select
                 value={toKey}
                 onChange={(e) => setToKey(e.target.value)}
-                className="w-full rounded-lg border border-zinc-300 px-3 py-2"
+                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
               >
                 {KEY_OPTIONS.map((key) => (
                   <option key={`to-${key}`} value={key}>
@@ -306,7 +316,7 @@ export default function TransposerApp() {
             </label>
           </div>
 
-          <label className="flex items-center gap-2 text-sm text-zinc-700">
+          <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
             <input
               type="checkbox"
               checked={preferFlats}
@@ -319,19 +329,19 @@ export default function TransposerApp() {
             type="button"
             onClick={handleTranspose}
             disabled={loading || !file}
-            className="w-full rounded-xl bg-zinc-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-400"
+            className="w-full rounded-xl bg-zinc-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-400 dark:bg-zinc-100 dark:text-zinc-900 dark:disabled:bg-zinc-600 dark:disabled:text-zinc-400"
           >
             {loading ? "OCR 및 변조 중..." : "코드 읽기 & 키 변조"}
           </button>
 
           {error && (
-            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/50 dark:text-red-300">
               {error}
             </p>
           )}
 
           {result && (
-            <div className="space-y-2 rounded-lg bg-zinc-50 p-3 text-sm text-zinc-700">
+            <div className="space-y-2 rounded-lg bg-zinc-50 p-3 text-sm text-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-300">
               <p>
                 OCR: <strong>{result.provider}</strong> · 인식 단어{" "}
                 {result.wordCount}개 · 코드 {result.chords.length}개
@@ -346,11 +356,11 @@ export default function TransposerApp() {
               <button
                 type="button"
                 onClick={handleDownload}
-                className="w-full rounded-lg bg-zinc-900 px-3 py-2.5 text-sm font-semibold text-white"
+                className="w-full rounded-lg bg-zinc-900 px-3 py-2.5 text-sm font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900"
               >
                 변조된 악보 PNG 다운로드
               </button>
-              <p className="text-xs text-zinc-500">
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
                 오른쪽 미리보기와 동일한 이미지가 저장됩니다.
               </p>
             </div>
@@ -358,13 +368,15 @@ export default function TransposerApp() {
         </div>
 
         <div className="space-y-2">
-          <p className="text-sm font-medium text-zinc-700">변조 결과 미리보기</p>
-          <div className="overflow-auto rounded-xl border border-zinc-200 bg-zinc-50 p-2">
+          <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            변조 결과 미리보기
+          </p>
+          <div className="overflow-auto rounded-xl border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-700 dark:bg-zinc-800/50">
             {previewUrl ? (
               <canvas ref={canvasRef} className="max-w-full" />
             ) : (
               <div className="flex min-h-48 items-center justify-center p-8">
-                <p className="text-center text-sm text-zinc-500">
+                <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">
                   이미지를 업로드하면 여기에 결과가 표시됩니다.
                 </p>
               </div>
