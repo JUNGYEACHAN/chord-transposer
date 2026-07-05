@@ -148,7 +148,9 @@ export class OcrSpaceProvider implements OcrProvider {
     try {
       data = JSON.parse(rawText) as OcrSpaceResponse;
     } catch {
-      throw new Error(`OCR.space HTTP ${response.status}: ${rawText.slice(0, 120)}`);
+      throw new Error(
+        `OCR.space HTTP ${response.status}: ${(rawText ?? "").slice(0, 120)}`,
+      );
     }
 
     if (!response.ok) {

@@ -29,7 +29,9 @@ const BLACKLIST = new Set([
 export function normalizeOcrText(text: string): string {
   return text
     .replace(/\s+/g, "")
-    .replace(/[Oo]/g, (m, _o, i, s) => (/\d/.test(s.slice(i + 1, i + 2)) ? "0" : m))
+    .replace(/[Oo]/g, (match, offset, str) =>
+      /\d/.test(str.slice(offset + 1, offset + 2)) ? "0" : match,
+    )
     .replace(/[|]/g, "/")
     .replace(/♯/g, "#")
     .replace(/♭/g, "b");
