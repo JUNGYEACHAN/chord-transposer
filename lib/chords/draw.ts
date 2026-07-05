@@ -19,6 +19,7 @@ export function drawTransposedSheet(
 
   for (const chord of sorted) {
     const { left, top, width, height } = chord.bbox;
+    if (width <= 0 || height <= 0) continue;
     const padX = Math.max(3, Math.round(width * 0.15));
     const padY = Math.max(2, Math.round(height * 0.2));
     const fontSize = Math.max(11, Math.round(height * 0.92));

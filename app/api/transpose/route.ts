@@ -72,6 +72,7 @@ export async function POST(request: NextRequest) {
       semitones,
       chords,
       wordCount: ocrResult.words.length,
+      ocrWords: ocrResult.words,
     });
   } catch (error) {
     const message =
