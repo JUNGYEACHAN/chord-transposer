@@ -17,7 +17,11 @@ export interface OcrResult {
 
 export interface OcrProvider {
   readonly name: string;
-  recognize(image: Buffer, mimeType: string): Promise<OcrResult>;
+  recognize(
+    image: Buffer,
+    mimeType: string,
+    engine?: string,
+  ): Promise<OcrResult>;
 }
 
 export type OcrProviderName = "ocr-space";

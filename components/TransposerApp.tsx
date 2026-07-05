@@ -8,32 +8,26 @@ import SheetComparison from "@/components/SheetComparison";
 import {
   drawAnalysisPreview,
   drawTransposedSheet,
-  scaleChordsToImage,
 } from "@/lib/chords/draw";
 import type { ChordHighlight } from "@/lib/chords/highlights";
 import type { DetectedChord } from "@/lib/chords/types";
 import { KEY_OPTIONS } from "@/lib/chords/types";
-import { prepareMaskedOcrFile } from "@/lib/images/chord-mask";
-import {
-  detectChordZonesFromImage,
-  type ChordZoneDetectionResult,
-} from "@/lib/images/chord-zone";
 import { hashFile } from "@/lib/images/hash";
 import { isImageFile, validateImageFile } from "@/lib/images/validate";
 import type { OcrWord } from "@/lib/ocr/types";
 
 interface AnalyzeResponse {
   provider: string;
+  ocrEngine: string;
   imageWidth: number;
   imageHeight: number;
   semitones: number;
   chords: DetectedChord[];
   highlights: ChordHighlight[];
   wordCount: number;
+  chordWordCount: number;
   ocrWords: OcrWord[];
-  chordZoneBands: { top: number; height: number; left: number; width: number }[];
-  zoneMethod: string;
-  staffCount: number;
+  method: string;
   error?: string;
 }
 
@@ -62,30 +56,6 @@ async function loadImage(url: string): Promise<HTMLImageElement> {
   return image;
 }
 
-function scaleHighlightsToImage(
-  highlights: ChordHighlight[],
-  ocrWidth: number,
-  ocrHeight: number,
-  imageWidth: number,
-  imageHeight: number,
-): ChordHighlight[] {
-  if (ocrWidth <= 0 || ocrHeight <= 0) return highlights;
-  const scaleX = imageWidth / ocrWidth;
-  const scaleY = imageHeight / ocrHeight;
-  if (Math.abs(scaleX - 1) < 0.001 && Math.abs(scaleY - 1) < 0.001) {
-    return highlights;
-  }
-  return highlights.map((item) => ({
-    ...item,
-    bbox: {
-      left: Math.round(item.bbox.left * scaleX),
-      top: Math.round(item.bbox.top * scaleY),
-      width: Math.max(1, Math.round(item.bbox.width * scaleX)),
-      height: Math.max(1, Math.round(item.bbox.height * scaleY)),
-    },
-  }));
-}
-
 export default function TransposerApp() {
   const analysisCanvasRef = useRef<HTMLCanvasElement>(null);
   const resultCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -95,8 +65,6 @@ export default function TransposerApp() {
   const [file, setFile] = useState<File | null>(null);
   const [imageHash, setImageHash] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [zoneDetection, setZoneDetection] =
-    useState<ChordZoneDetectionResult | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [fromKey, setFromKey] = useState("E");
   const [toKey, setToKey] = useState("D");
@@ -127,53 +95,15 @@ export default function TransposerApp() {
   useEffect(() => {
     if (!previewUrl) return;
 
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const image = await loadImage(previewUrl);
-        if (cancelled) return;
-
-        const detection = await detectChordZonesFromImage(image);
-        if (cancelled) return;
-
-        setZoneDetection(detection);
-      } catch (err) {
-        if (!cancelled) {
-          console.error("Chord zone detection failed:", err);
-          setZoneDetection({
-            bands: [],
-            method: "no-staff-found",
-            staffCount: 0,
-            staffSystems: [],
-            chordRowCount: 0,
-          });
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [previewUrl]);
-
-  useEffect(() => {
-    if (!previewUrl || !zoneDetection) return;
-
     void (async () => {
       const canvas = analysisCanvasRef.current;
       if (!canvas) return;
-
       const image = await loadImage(previewUrl);
-      drawAnalysisPreview(canvas, image, {
-        bands: zoneDetection.bands,
-        highlights,
-        staffSystems: zoneDetection.staffSystems,
-      });
+      drawAnalysisPreview(canvas, image, { highlights });
     })().catch((err) => {
-      console.error("Analysis preview draw failed:", err);
+      console.error("Preview draw failed:", err);
     });
-  }, [previewUrl, zoneDetection, highlights]);
+  }, [previewUrl, highlights]);
 
   useEffect(() => {
     if (!transposed || !previewUrl) return;
@@ -196,7 +126,6 @@ export default function TransposerApp() {
     setError(null);
     setAnalysis(null);
     setHighlights([]);
-    setZoneDetection(null);
     setAutoChords([]);
     setEditableChords([]);
     setTransposed(false);
@@ -212,17 +141,8 @@ export default function TransposerApp() {
   }
 
   async function handleAnalyze() {
-    if (!file || !previewUrl || !zoneDetection) {
+    if (!file || !previewUrl) {
       setError("악보 이미지를 먼저 선택해 주세요.");
-      return;
-    }
-
-    if (zoneDetection.bands.length === 0) {
-      setError(
-        zoneDetection.method === "no-staff-found"
-          ? "오선을 찾지 못했습니다. 더 선명한 악보 이미지를 사용해 주세요."
-          : "코드 줄을 찾지 못했습니다. 코드가 없는 줄은 OCR 영역에서 제외됩니다.",
-      );
       return;
     }
 
@@ -237,23 +157,11 @@ export default function TransposerApp() {
     setSaveError(null);
 
     try {
-      const image = await loadImage(previewUrl);
-      const ocrFile = await prepareMaskedOcrFile(
-        image,
-        zoneDetection.bands,
-        file.name,
-        1024 * 1024,
-      );
-
       const formData = new FormData();
-      formData.append("image", ocrFile, ocrFile.name);
+      formData.append("image", file, file.name);
       formData.append("fromKey", fromKey);
       formData.append("toKey", toKey);
       formData.append("preferFlats", String(preferFlats));
-      formData.append("provider", "ocr-space");
-      formData.append("chordZoneBands", JSON.stringify(zoneDetection.bands));
-      formData.append("zoneMethod", zoneDetection.method);
-      formData.append("staffCount", String(zoneDetection.staffCount));
 
       const response = await fetch("/api/analyze-chords", {
         method: "POST",
@@ -267,34 +175,22 @@ export default function TransposerApp() {
         throw new Error(data.error ?? "코드 분석에 실패했습니다.");
       }
 
-      const scaledChords = scaleChordsToImage(
-        data.chords,
-        data.imageWidth,
-        data.imageHeight,
-        image.naturalWidth,
-        image.naturalHeight,
-      );
-      const scaledHighlights = scaleHighlightsToImage(
-        data.highlights,
-        data.imageWidth,
-        data.imageHeight,
-        image.naturalWidth,
-        image.naturalHeight,
-      );
+      if (data.chords.length === 0) {
+        setError(
+          "OCR에서 코드를 찾지 못했습니다. 더 선명한 이미지이거나 원래 키 설정을 확인해 주세요.",
+        );
+      }
 
-      const editable = toEditableChords(scaledChords);
+      const editable = toEditableChords(data.chords);
       setAnalysis(data);
-      setHighlights(scaledHighlights);
+      setHighlights(data.highlights);
       setAutoChords(editable);
       setEditableChords(editable.map((chord) => ({ ...chord })));
 
+      const image = await loadImage(previewUrl);
       const canvas = analysisCanvasRef.current;
       if (canvas) {
-        drawAnalysisPreview(canvas, image, {
-          bands: zoneDetection.bands,
-          highlights: scaledHighlights,
-          staffSystems: zoneDetection.staffSystems,
-        });
+        drawAnalysisPreview(canvas, image, { highlights: data.highlights });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "알 수 없는 오류");
@@ -305,7 +201,7 @@ export default function TransposerApp() {
 
   async function handleTranspose() {
     if (!analysis || !previewUrl || editableChords.length === 0) {
-      setError("먼저 코드 영역 분석을 실행해 주세요.");
+      setError("먼저 코드 분석을 실행해 주세요.");
       return;
     }
 
@@ -355,7 +251,7 @@ export default function TransposerApp() {
           fromKey,
           toKey,
           semitones: analysis.semitones,
-          ocrProvider: analysis.provider,
+          ocrProvider: `${analysis.provider}:${analysis.ocrEngine}`,
           wordCount: analysis.wordCount,
           ocrWords: analysis.ocrWords,
           autoChords,
@@ -381,8 +277,8 @@ export default function TransposerApp() {
       <header className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Chord Transposer</h1>
         <p className="text-zinc-600 dark:text-zinc-400">
-          오선 위 코드 영역만 찾아 OCR하고, 코드로 보이는 글자를 파란색으로
-          표시합니다. 확인 후 키 변조를 적용합니다.
+          악보 이미지를 OCR.space API로 분석해 코드를 찾고, 파란색으로 표시한 뒤
+          키 변조를 적용합니다.
         </p>
       </header>
 
@@ -501,10 +397,10 @@ export default function TransposerApp() {
           <button
             type="button"
             onClick={handleAnalyze}
-            disabled={analyzing || !file || !zoneDetection || zoneDetection.bands.length === 0}
+            disabled={analyzing || !file}
             className="rounded-xl bg-zinc-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-400 dark:bg-zinc-100 dark:text-zinc-900 dark:disabled:bg-zinc-600"
           >
-            {analyzing ? "코드 영역 OCR 중..." : "1. 코드 영역 분석"}
+            {analyzing ? "OCR.space 분석 중..." : "1. 코드 OCR 분석"}
           </button>
           <button
             type="button"
@@ -516,28 +412,17 @@ export default function TransposerApp() {
           </button>
         </div>
 
-        {zoneDetection && (
+        {analysis && (
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            오선 {zoneDetection.staffCount}개 · 코드 줄 {zoneDetection.chordRowCount}
-            /{zoneDetection.staffCount} ·{" "}
-            {zoneDetection.method === "staff-anchored"
-              ? "오선 바로 위 코드 줄만 OCR"
-              : zoneDetection.method === "no-chords-found"
-                ? "코드 줄 없음 (OCR 영역 0)"
-                : "오선 미감지"}
+            OCR.space 엔진 {analysis.ocrEngine} · OCR 단어 {analysis.wordCount}개 ·
+            코드 후보 {analysis.chordWordCount}개 · 파란 표시{" "}
+            {highlights.length}개 · 병합 코드 {editableChords.length}개
           </p>
         )}
 
         {error && (
           <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/50 dark:text-red-300">
             {error}
-          </p>
-        )}
-
-        {analysis && (
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            OCR 단어 {analysis.wordCount}개 · 파란 표시{" "}
-            {highlights.length}개 · 병합 코드 {editableChords.length}개
           </p>
         )}
       </section>
@@ -550,16 +435,8 @@ export default function TransposerApp() {
             </h2>
             <div className="flex flex-wrap gap-3 text-xs text-zinc-500 dark:text-zinc-400">
               <span className="inline-flex items-center gap-1">
-                <span className="inline-block h-3 w-3 rounded border border-dashed border-red-500/60 bg-red-200/30" />
-                감지된 오선
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="inline-block h-3 w-3 rounded border-2 border-dashed border-amber-600 bg-amber-200/40" />
-                코드 OCR 영역
-              </span>
-              <span className="inline-flex items-center gap-1">
                 <span className="inline-block h-3 w-3 rounded bg-blue-400/70 ring-1 ring-blue-700" />
-                코드로 보이는 글자
+                OCR 코드 후보
               </span>
             </div>
           </div>

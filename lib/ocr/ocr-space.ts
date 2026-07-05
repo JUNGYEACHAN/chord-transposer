@@ -160,8 +160,12 @@ export class OcrSpaceProvider implements OcrProvider {
     return data;
   }
 
-  async recognize(image: Buffer, mimeType: string): Promise<OcrResult> {
-    let data = await this.request(image, mimeType, "1");
+  async recognize(
+    image: Buffer,
+    mimeType: string,
+    engine = "2",
+  ): Promise<OcrResult> {
+    let data = await this.request(image, mimeType, engine);
 
     if (data.IsErroredOnProcessing || data.OCRExitCode !== 1) {
       const firstError = formatOcrSpaceError(data);
@@ -171,8 +175,9 @@ export class OcrSpaceProvider implements OcrProvider {
         );
       }
 
-      // Engine 1 failed for other reasons — retry once with engine 2.
-      data = await this.request(image, mimeType, "2");
+      if (engine !== "1") {
+        data = await this.request(image, mimeType, "1");
+      }
     }
 
     if (data.IsErroredOnProcessing || data.OCRExitCode !== 1) {

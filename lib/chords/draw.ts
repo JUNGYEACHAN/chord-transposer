@@ -1,45 +1,5 @@
 import type { ChordHighlight } from "./highlights";
 import type { DetectedChord } from "./types";
-import type { ChordZoneBand, StaffSystem } from "../images/lead-sheet";
-import type { ChordZoneDetectionResult } from "../images/detect-chord-zones";
-
-/** Outline detected staff systems for layout debugging. */
-export function drawStaffSystems(
-  ctx: CanvasRenderingContext2D,
-  staffSystems: StaffSystem[],
-  canvasWidth: number,
-) {
-  for (const staff of staffSystems) {
-    ctx.fillStyle = "rgba(239, 68, 68, 0.06)";
-    ctx.fillRect(0, staff.top, canvasWidth, staff.bottom - staff.top);
-    ctx.strokeStyle = "rgba(220, 38, 38, 0.45)";
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.strokeRect(
-      1,
-      staff.top + 1,
-      canvasWidth - 2,
-      staff.bottom - staff.top - 2,
-    );
-    ctx.setLineDash([]);
-  }
-}
-
-/** Draw detected chord-zone bands (amber) for review before OCR. */
-export function drawChordZoneBands(
-  ctx: CanvasRenderingContext2D,
-  bands: ChordZoneBand[],
-) {
-  for (const band of bands) {
-    ctx.fillStyle = "rgba(245, 158, 11, 0.12)";
-    ctx.fillRect(band.left, band.top, band.width, band.height);
-    ctx.strokeStyle = "rgba(217, 119, 6, 0.85)";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([8, 6]);
-    ctx.strokeRect(band.left + 1, band.top + 1, band.width - 2, band.height - 2);
-    ctx.setLineDash([]);
-  }
-}
 
 /** Highlight chord-like OCR tokens in blue on the sheet. */
 export function drawChordHighlights(
@@ -77,9 +37,7 @@ export function drawAnalysisPreview(
   canvas: HTMLCanvasElement,
   image: HTMLImageElement,
   options: {
-    bands?: ChordZoneBand[];
     highlights?: ChordHighlight[];
-    staffSystems?: StaffSystem[];
   } = {},
 ) {
   const ctx = canvas.getContext("2d");
@@ -89,12 +47,6 @@ export function drawAnalysisPreview(
   canvas.height = image.naturalHeight;
   ctx.drawImage(image, 0, 0);
 
-  if (options.staffSystems?.length) {
-    drawStaffSystems(ctx, options.staffSystems, canvas.width);
-  }
-  if (options.bands?.length) {
-    drawChordZoneBands(ctx, options.bands);
-  }
   if (options.highlights?.length) {
     drawChordHighlights(ctx, options.highlights);
   }

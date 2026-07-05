@@ -1,16 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { extractChordsFromOcr } from "@/lib/chords/harness";
-import { extractChordHighlights } from "@/lib/chords/highlights";
 import { semitonesBetweenKeys } from "@/lib/chords/transpose";
 import type { KeyRoot } from "@/lib/chords/types";
-import type { ChordZoneBand } from "@/lib/images/chord-zone";
 import { resolveImageMimeType } from "@/lib/images/validate";
-import { createOcrProvider } from "@/lib/ocr";
+import { analyzeLeadSheetImage } from "@/lib/ocr/analyze-sheet";
 import { normalizeOcrApiKey } from "@/lib/ocr/normalize-key";
 
 export const maxDuration = 60;
 
-const MAX_BYTES = 1024 * 1024;
+const MAX_BYTES = 8 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
   try {
@@ -43,14 +40,11 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(await file.arrayBuffer());
     if (buffer.byteLength > MAX_BYTES) {
       return NextResponse.json(
-        {
-          error: `파일 크기는 ${MAX_BYTES / (1024 * 1024)}MB 이하여야 합니다.`,
-        },
+        { error: "파일 크기는 8MB 이하여야 합니다." },
         { status: 400 },
       );
     }
 
-    const providerName = String(formData.get("provider") ?? "ocr-space");
     const fromKey = String(formData.get("fromKey") ?? "") as KeyRoot;
     const toKey = String(formData.get("toKey") ?? "") as KeyRoot;
     const preferFlats = formData.get("preferFlats") === "true";
@@ -60,39 +54,23 @@ export async function POST(request: NextRequest) {
       semitones = semitonesBetweenKeys(fromKey, toKey);
     }
 
-    let chordZoneBands: ChordZoneBand[] = [];
-    const bandsJson = String(formData.get("chordZoneBands") ?? "");
-    if (bandsJson) {
-      try {
-        chordZoneBands = JSON.parse(bandsJson) as ChordZoneBand[];
-      } catch {
-        /* ignore malformed bands metadata */
-      }
-    }
-
-    const zoneMethod = String(formData.get("zoneMethod") ?? "unknown");
-    const staffCount = Number(formData.get("staffCount") ?? "0");
-
-    const provider = createOcrProvider(providerName, apiKey);
-    const ocrResult = await provider.recognize(buffer, mimeType);
-    const highlights = extractChordHighlights(ocrResult.words);
-    const chords = extractChordsFromOcr(ocrResult.words, ocrResult.imageHeight, {
+    const analysis = await analyzeLeadSheetImage(buffer, mimeType, apiKey, {
       semitones,
       preferFlats,
     });
 
     return NextResponse.json({
-      provider: ocrResult.provider,
-      imageWidth: ocrResult.imageWidth,
-      imageHeight: ocrResult.imageHeight,
+      provider: analysis.provider,
+      ocrEngine: analysis.engine,
+      imageWidth: analysis.imageWidth,
+      imageHeight: analysis.imageHeight,
       semitones,
-      chords,
-      highlights,
-      wordCount: ocrResult.words.length,
-      ocrWords: ocrResult.words,
-      chordZoneBands,
-      zoneMethod,
-      staffCount,
+      chords: analysis.chords,
+      highlights: analysis.highlights,
+      wordCount: analysis.wordCount,
+      chordWordCount: analysis.chordWords.length,
+      ocrWords: analysis.words,
+      method: "ocr-space-full-page",
     });
   } catch (error) {
     const message =
