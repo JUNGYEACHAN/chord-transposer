@@ -1,32 +1,15 @@
 /**
  * Chord-row detector (staff-anchored).
- *
- * Lead sheet layout per system:
- *   [chord row]  ← ONLY this becomes an OCR band (if ink found)
- *   [5-line staff + notes]  ← never OCR
- *   [lyrics]  ← never OCR
- *
- * Rules:
- * - One band max per staff system, strictly above staff.top
- * - No band if the chord strip is empty (e.g. intro line with no chords)
- * - Never merge bands across different staves
- * - No full-page or top-percent fallback
+ * Staff lines are found via horizontal lineScore (robust to JPEG / note breaks).
  */
 
 import type { ChordZoneBand, StaffSystem } from "./lead-sheet";
 
-export type RowKind =
-  | "empty"
-  | "staff-line"
-  | "dense-text"
-  | "sparse-text"
-  | "unknown";
-
 export interface RowProfile {
   y: number;
   inkRatio: number;
+  lineScore: number;
   longestRunRatio: number;
-  kind: RowKind;
 }
 
 export interface ChordZoneDetectionResult {
@@ -34,33 +17,52 @@ export interface ChordZoneDetectionResult {
   method: "staff-anchored" | "no-staff-found" | "no-chords-found";
   staffCount: number;
   staffSystems: StaffSystem[];
-  /** Staff systems that had a chord band created */
   chordRowCount: number;
 }
 
-const DARK_LUM = 112;
+const DARK_LUM = 140;
+const LINE_KERNEL = 9;
 
 function luminance(r: number, g: number, b: number): number {
   return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+function isDark(data: Uint8ClampedArray, width: number, x: number, y: number): boolean {
+  const i = (y * width + x) * 4;
+  return luminance(data[i], data[i + 1], data[i + 2]) < DARK_LUM;
+}
+
+function computeLineScore(
+  data: Uint8ClampedArray,
+  width: number,
+  y: number,
+): number {
+  let hits = 0;
+  let windows = 0;
+
+  for (let x = 0; x + LINE_KERNEL <= width; x += 3) {
+    let dark = 0;
+    for (let k = 0; k < LINE_KERNEL; k++) {
+      if (isDark(data, width, x + k, y)) dark++;
+    }
+    if (dark >= LINE_KERNEL - 2) hits++;
+    windows++;
+  }
+
+  return windows > 0 ? hits / windows : 0;
 }
 
 function analyzeRow(
   data: Uint8ClampedArray,
   width: number,
   y: number,
-  xStep: number,
-): Omit<RowProfile, "kind"> {
+): RowProfile {
   let dark = 0;
-  let sampled = 0;
   let longestRun = 0;
   let run = 0;
 
-  for (let x = 0; x < width; x += xStep) {
-    const index = (y * width + x) * 4;
-    const lum = luminance(data[index], data[index + 1], data[index + 2]);
-    sampled++;
-
-    if (lum < DARK_LUM) {
+  for (let x = 0; x < width; x++) {
+    if (isDark(data, width, x, y)) {
       dark++;
       run++;
       longestRun = Math.max(longestRun, run);
@@ -71,51 +73,56 @@ function analyzeRow(
 
   return {
     y,
-    inkRatio: sampled > 0 ? dark / sampled : 0,
-    longestRunRatio: sampled > 0 ? longestRun / sampled : 0,
+    inkRatio: dark / width,
+    lineScore: computeLineScore(data, width, y),
+    longestRunRatio: longestRun / width,
   };
 }
 
-function classifyRow(row: Omit<RowProfile, "kind">): RowKind {
-  const { inkRatio, longestRunRatio } = row;
-
-  if (inkRatio < 0.007) return "empty";
-
-  if (longestRunRatio >= 0.38 && inkRatio <= 0.28) return "staff-line";
-
-  if (inkRatio >= 0.04 && longestRunRatio >= 0.06 && longestRunRatio <= 0.34) {
-    return "dense-text";
-  }
-
-  if (
-    longestRunRatio <= 0.11 &&
-    inkRatio >= 0.012 &&
-    inkRatio <= 0.24
-  ) {
-    return "sparse-text";
-  }
-
-  return "unknown";
-}
-
-function buildRowProfiles(
+export function buildRowProfiles(
   data: Uint8ClampedArray,
   width: number,
   height: number,
 ): RowProfile[] {
-  const xStep = width > 1100 ? 2 : 1;
   const profiles: RowProfile[] = [];
-
   for (let y = 0; y < height; y++) {
-    const base = analyzeRow(data, width, y, xStep);
-    profiles.push({ ...base, kind: classifyRow(base) });
+    profiles.push(analyzeRow(data, width, y));
+  }
+  return profiles;
+}
+
+function isStaffLineRow(row: RowProfile): boolean {
+  return row.lineScore >= 0.22 && row.inkRatio >= 0.006 && row.inkRatio <= 0.62;
+}
+
+function dedupeStaffLineRows(
+  lineYs: number[],
+  profiles: RowProfile[],
+): number[] {
+  if (lineYs.length === 0) return [];
+
+  const sorted = [...lineYs].sort((a, b) => a - b);
+  const deduped: number[] = [sorted[0]];
+
+  for (let i = 1; i < sorted.length; i++) {
+    const y = sorted[i];
+    const last = deduped[deduped.length - 1];
+
+    if (y - last <= 4) {
+      if (profiles[y].lineScore > profiles[last].lineScore) {
+        deduped[deduped.length - 1] = y;
+      }
+    } else {
+      deduped.push(y);
+    }
   }
 
-  return profiles;
+  return deduped;
 }
 
 function clusterStaffLineRows(
   lineYs: number[],
+  profiles: RowProfile[],
   maxLineGap: number,
   maxStaffHeight: number,
 ): StaffSystem[] {
@@ -125,24 +132,17 @@ function clusterStaffLineRows(
   let group: number[] = [lineYs[0]];
 
   const flush = () => {
-    if (
-      group.length >= 4 &&
-      group[group.length - 1] - group[0] <= maxStaffHeight
-    ) {
-      systems.push({
-        top: group[0],
-        bottom: group[group.length - 1],
-        lineCount: group.length,
-      });
-    } else if (
-      group.length >= 3 &&
-      group[group.length - 1] - group[0] <= maxStaffHeight * 0.85
-    ) {
-      systems.push({
-        top: group[0],
-        bottom: group[group.length - 1],
-        lineCount: group.length,
-      });
+    const strong = group.filter((y) => profiles[y].lineScore >= 0.26);
+
+    if (strong.length >= 3) {
+      const span = strong[strong.length - 1] - strong[0];
+      if (span >= 10 && span <= maxStaffHeight) {
+        systems.push({
+          top: strong[0],
+          bottom: strong[strong.length - 1],
+          lineCount: strong.length,
+        });
+      }
     }
     group = [];
   };
@@ -163,81 +163,154 @@ function clusterStaffLineRows(
   return systems;
 }
 
+function detectStaffPeaks(
+  profiles: RowProfile[],
+  height: number,
+): StaffSystem[] {
+  const peaks: number[] = [];
+
+  for (let y = 2; y < height - 2; y++) {
+    const row = profiles[y];
+    if (row.lineScore < 0.18) continue;
+    if (row.lineScore < profiles[y - 1].lineScore) continue;
+    if (row.lineScore < profiles[y + 1].lineScore) continue;
+    peaks.push(y);
+  }
+
+  if (peaks.length === 0) return [];
+
+  const maxLineGap = Math.max(12, Math.round(height * 0.011));
+  const maxStaffHeight = Math.max(70, Math.round(height * 0.06));
+
+  return clusterStaffLineRows(
+    dedupeStaffLineRows(peaks, profiles),
+    profiles,
+    maxLineGap,
+    maxStaffHeight,
+  );
+}
+
 function detectStaffSystems(
   profiles: RowProfile[],
   height: number,
 ): StaffSystem[] {
-  const lineYs = profiles
-    .filter(
-      (row) =>
-        row.kind === "staff-line" ||
-        (row.longestRunRatio >= 0.42 && row.inkRatio <= 0.22),
-    )
-    .map((row) => row.y);
+  const lineYs = dedupeStaffLineRows(
+    profiles.filter(isStaffLineRow).map((row) => row.y),
+    profiles,
+  );
 
-  const maxLineGap = Math.max(9, Math.round(height * 0.007));
-  const maxStaffHeight = Math.max(42, Math.round(height * 0.038));
+  const maxLineGap = Math.max(14, Math.round(height * 0.013));
+  const maxStaffHeight = Math.max(80, Math.round(height * 0.07));
+  const minSystemGap = Math.max(36, Math.round(height * 0.05));
 
-  const raw = clusterStaffLineRows(lineYs, maxLineGap, maxStaffHeight);
+  const raw = clusterStaffLineRows(lineYs, profiles, maxLineGap, maxStaffHeight);
   const sorted = [...raw].sort((a, b) => a.top - b.top);
   const kept: StaffSystem[] = [];
 
   for (const system of sorted) {
-    const overlaps = kept.some(
-      (k) => system.top <= k.bottom + 6 && system.bottom >= k.top - 6,
+    const tooClose = kept.some(
+      (k) =>
+        system.top <= k.bottom + minSystemGap &&
+        system.bottom >= k.top - minSystemGap,
     );
-    if (!overlaps) kept.push(system);
+    if (!tooClose) kept.push(system);
   }
 
-  return kept;
+  if (kept.length > 0) return kept;
+
+  return detectStaffPeaks(profiles, height);
 }
 
-function isChordInkRow(row: RowProfile): boolean {
-  if (row.kind === "empty") return false;
-  if (row.kind === "staff-line") return false;
-  if (row.kind === "dense-text") return false;
+function staffReferenceMetrics(
+  profiles: RowProfile[],
+  staff: StaffSystem,
+): { peakInk: number; peakLineScore: number } {
+  let peakInk = 0;
+  let peakLineScore = 0;
 
-  if (row.longestRunRatio >= 0.28) return false;
-
-  if (
-    row.inkRatio >= 0.038 &&
-    row.longestRunRatio >= 0.07 &&
-    row.longestRunRatio <= 0.32
-  ) {
-    return false;
+  for (let y = staff.top; y <= staff.bottom; y++) {
+    const row = profiles[y];
+    if (!row) continue;
+    peakInk = Math.max(peakInk, row.inkRatio);
+    peakLineScore = Math.max(peakLineScore, row.lineScore);
   }
 
-  if (row.kind === "sparse-text") return true;
+  return { peakInk, peakLineScore };
+}
 
-  if (
-    row.inkRatio >= 0.012 &&
-    row.inkRatio <= 0.22 &&
-    row.longestRunRatio <= 0.1
-  ) {
-    return true;
+function windowBaselineMetrics(
+  profiles: RowProfile[],
+  windowTop: number,
+  windowBottom: number,
+): { ink: number; lineScore: number } {
+  const inks: number[] = [];
+  const scores: number[] = [];
+
+  for (let y = windowTop; y <= windowBottom; y++) {
+    const row = profiles[y];
+    if (!row) continue;
+    inks.push(row.inkRatio);
+    scores.push(row.lineScore);
+  }
+
+  if (inks.length === 0) {
+    return { ink: 0, lineScore: 0 };
+  }
+
+  inks.sort((a, b) => a - b);
+  scores.sort((a, b) => a - b);
+  const idx = Math.floor(inks.length * 0.2);
+
+  return {
+    ink: inks[idx] ?? inks[0],
+    lineScore: scores[idx] ?? scores[0],
+  };
+}
+
+function isChordInkRowRelative(
+  row: RowProfile,
+  staffRef: { peakInk: number; peakLineScore: number },
+  baseline: { ink: number; lineScore: number },
+): boolean {
+  const inkLift = row.inkRatio - baseline.ink;
+  const scoreLift = row.lineScore - baseline.lineScore;
+
+  // Ignore empty rows and uniform preview-frame noise.
+  if (inkLift < 0.055) return false;
+
+  // Staff lines sit at the top of the ink/lineScore range for this system.
+  if (row.inkRatio >= staffRef.peakInk - 0.06) return false;
+  if (row.lineScore >= staffRef.peakLineScore - 0.08) return false;
+
+  // Chord symbols create localized ink peaks above the window baseline.
+  if (inkLift >= 0.08 || (inkLift >= 0.055 && scoreLift >= 0.04)) {
+    return row.inkRatio <= 0.42;
   }
 
   return false;
 }
 
-function detectChordBandAboveStaff(
+export function detectChordBandAboveStaff(
   profiles: RowProfile[],
   staff: StaffSystem,
   width: number,
   height: number,
 ): ChordZoneBand | null {
-  const gapAboveStaff = Math.max(4, Math.round(height * 0.004));
-  const windowHeight = Math.max(48, Math.round(height * 0.055));
+  const gapAboveStaff = Math.max(2, Math.round(height * 0.002));
+  const windowHeight = Math.max(52, Math.round(height * 0.065));
 
-  const windowBottom = staff.top - gapAboveStaff;
+  const windowBottom = staff.top - 1;
   const windowTop = Math.max(0, windowBottom - windowHeight);
 
   if (windowBottom <= windowTop) return null;
 
+  const staffRef = staffReferenceMetrics(profiles, staff);
+  const baseline = windowBaselineMetrics(profiles, windowTop, windowBottom);
+
   const chordRows: number[] = [];
   for (let y = windowTop; y <= windowBottom; y++) {
     const row = profiles[y];
-    if (row && isChordInkRow(row)) {
+    if (row && isChordInkRowRelative(row, staffRef, baseline)) {
       chordRows.push(y);
     }
   }
@@ -245,13 +318,13 @@ function detectChordBandAboveStaff(
   if (chordRows.length === 0) return null;
 
   const peakInk = Math.max(...chordRows.map((y) => profiles[y].inkRatio));
-  if (chordRows.length < 2 && peakInk < 0.02) return null;
+  if (chordRows.length < 2 && peakInk < 0.012) return null;
 
-  const pad = 3;
+  const pad = 4;
   const top = Math.max(windowTop, chordRows[0] - pad);
   const bottom = Math.min(windowBottom, chordRows[chordRows.length - 1] + pad);
-
   const safeBottom = Math.min(bottom, staff.top - gapAboveStaff);
+
   if (safeBottom <= top) return null;
 
   return {
@@ -323,11 +396,8 @@ export async function detectChordZonesFromImage(
   image: HTMLImageElement,
 ): Promise<ChordZoneDetectionResult> {
   const canvas = document.createElement("canvas");
-  const maxWidth = 1600;
-  const scale =
-    image.naturalWidth > maxWidth ? maxWidth / image.naturalWidth : 1;
-  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
 
   const ctx = canvas.getContext("2d");
   if (!ctx) {
@@ -340,19 +410,11 @@ export async function detectChordZonesFromImage(
     };
   }
 
-  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(image, 0, 0);
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const detection = detectChordZonesFromImageData(
+  return detectChordZonesFromImageData(
     imageData.data,
     canvas.width,
     canvas.height,
-  );
-
-  if (scale === 1) return detection;
-
-  return scaleDetectionResult(
-    detection,
-    image.naturalWidth / canvas.width,
-    image.naturalHeight / canvas.height,
   );
 }
