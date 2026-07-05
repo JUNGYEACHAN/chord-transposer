@@ -29,7 +29,7 @@ export async function preprocessForOcr(
     .normalize()
     .sharpen({ sigma: 0.6 });
 
-  let quality = 90;
+  let quality = 92;
   let output = await pipeline
     .jpeg({ quality, mozjpeg: true })
     .toBuffer({ resolveWithObject: true });

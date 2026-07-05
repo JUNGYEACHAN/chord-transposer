@@ -8,14 +8,13 @@ function wordCenter(word: OcrWord): { x: number; y: number } {
 }
 
 function wordsSimilar(a: OcrWord, b: OcrWord): boolean {
-  if (a.text.toLowerCase() !== b.text.toLowerCase()) return false;
   const ca = wordCenter(a);
   const cb = wordCenter(b);
   const threshold = Math.max(a.height, b.height, 12) * 1.2;
   return Math.abs(ca.x - cb.x) <= threshold && Math.abs(ca.y - cb.y) <= threshold;
 }
 
-/** Drop duplicate tokens from overlapping OCR tiles. */
+/** Drop duplicate tokens from overlapping OCR tiles or multi-engine passes. */
 export function dedupeOcrWords(words: OcrWord[]): OcrWord[] {
   const kept: OcrWord[] = [];
 
@@ -25,9 +24,14 @@ export function dedupeOcrWords(words: OcrWord[]): OcrWord[] {
       kept.push(word);
       continue;
     }
-    if (word.confidence > duplicate.confidence) {
-      kept[kept.indexOf(duplicate)] = word;
-    }
+
+    const prefer =
+      word.text.length > duplicate.text.length ||
+      (word.text.length === duplicate.text.length &&
+        word.confidence > duplicate.confidence)
+        ? word
+        : duplicate;
+    kept[kept.indexOf(duplicate)] = prefer;
   }
 
   return kept.sort((a, b) => a.top - b.top || a.left - b.left);

@@ -426,12 +426,19 @@ export default function TransposerApp() {
 
         {analysis && (
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            OCR.space 엔진 {analysis.ocrEngine} · 타일 {analysis.tileCount}개 · OCR
-            단어 {analysis.wordCount}개 · 코드 후보 {analysis.chordWordCount}개 ·
-            파란 표시 {highlights.length}개 · 병합 코드 {editableChords.length}개
+            OCR.space {analysis.ocrEngine} · 타일 {analysis.tileCount}개 · OCR 단어{" "}
+            {analysis.wordCount}개 · 병합 코드 {editableChords.length}개
             {analysis.keyFilter &&
-              ` · ${analysis.keyFilter.key}장조 후보 ${analysis.keyFilter.vocabularySize}개 (키外 ${analysis.keyFilter.rejectedTokens}개 제외${analysis.keyFilter.correctedChords > 0 ? `, ${analysis.keyFilter.correctedChords}개 보정` : ""})`}
-            {analysis.successSaved && " · 성공 사례 Turso 저장됨"}
+              ` · ${analysis.keyFilter.key}키 필터 (키外 ${analysis.keyFilter.rejectedTokens}개 제외${analysis.keyFilter.correctedChords > 0 ? `, ${analysis.keyFilter.correctedChords}개 보정` : ""})`}
+            {analysis.successSaved && " · Turso 저장됨"}
+          </p>
+        )}
+
+        {analysis && editableChords.length < 3 && (
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            OCR.space는 악보 글꼴·# 기호 인식이 약합니다. 원래 키가 조표와
+            다르면 검출률이 더 떨어질 수 있습니다. 누락 코드는 아래 수정
+            패널에서 추가해 주세요.
           </p>
         )}
 

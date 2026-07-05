@@ -1,8 +1,8 @@
 import { selectChordOcrWords } from "../chords/filter-ocr-words";
+import { highlightsFromChords } from "../chords/chord-highlights";
 import { extractChordsFromOcr } from "../chords/harness";
 import {
   applyKeyFilterToChords,
-  applyKeyFilterToHighlights,
   createKeyFilter,
   type KeyFilterStats,
 } from "../chords/key-filter";
@@ -15,6 +15,7 @@ import {
   preprocessForOcr,
   scaleOcrWordsToOriginal,
 } from "../images/preprocess-for-ocr";
+import { dedupeOcrWords } from "./dedupe-words";
 import { createOcrProvider } from "./index";
 import { recognizeTiledImage } from "./tiled-recognize";
 import type { OcrWord } from "./types";
@@ -69,7 +70,6 @@ export interface SheetAnalysisResult {
 async function recognizeWithBestEngine(
   provider: ReturnType<typeof createOcrProvider>,
   preprocessed: Awaited<ReturnType<typeof preprocessForOcr>>,
-  fromKey?: KeyRoot,
 ): Promise<{
   words: OcrWord[];
   imageWidth: number;
@@ -79,45 +79,46 @@ async function recognizeWithBestEngine(
   tileCount: number;
 }> {
   const engines = ["2", "1"] as const;
-  let best: Awaited<ReturnType<typeof recognizeTiledImage>> | null = null;
-  let bestEngine = "2";
-  let bestScore = -1;
+  const passes: Array<{
+    result: Awaited<ReturnType<typeof recognizeTiledImage>>;
+    engine: string;
+    score: number;
+  }> = [];
 
   for (const engine of engines) {
     try {
       const result = await recognizeTiledImage(provider, preprocessed, engine);
-      const chordWords = selectChordOcrWords(
-        scaleOcrWordsToOriginal(
-          result.words,
-          preprocessed,
-          result.imageWidth,
-          result.imageHeight,
-        ),
-        fromKey,
+      const scaled = scaleOcrWordsToOriginal(
+        result.words,
+        preprocessed,
+        result.imageWidth,
+        result.imageHeight,
       );
+      const chordWords = selectChordOcrWords(scaled);
       const score = chordWords.length * 10 + result.words.length;
-      if (score > bestScore) {
-        best = result;
-        bestEngine = engine;
-        bestScore = score;
-      }
-      if (chordWords.length >= 4) break;
+      passes.push({ result, engine, score });
     } catch {
       /* try next engine */
     }
   }
 
-  if (!best) {
+  if (passes.length === 0) {
     throw new Error("OCR.space에서 텍스트를 읽지 못했습니다.");
   }
 
+  passes.sort((a, b) => b.score - a.score);
+  const mergedWords = dedupeOcrWords(
+    passes.flatMap((pass) => pass.result.words),
+  );
+  const best = passes[0];
+
   return {
-    words: best.words,
-    imageWidth: best.imageWidth,
-    imageHeight: best.imageHeight,
-    rawText: best.rawText,
-    engine: bestEngine,
-    tileCount: best.tileCount,
+    words: mergedWords.length > best.result.words.length ? mergedWords : best.result.words,
+    imageWidth: best.result.imageWidth,
+    imageHeight: best.result.imageHeight,
+    rawText: passes.map((pass) => pass.result.rawText).join("\n"),
+    engine: passes.length > 1 ? `${best.engine}+merge` : best.engine,
+    tileCount: best.result.tileCount,
   };
 }
 
@@ -136,11 +137,7 @@ export async function analyzeLeadSheetImage(
 ): Promise<SheetAnalysisResult> {
   const preprocessed = await preprocessForOcr(imageBuffer);
   const provider = createOcrProvider("ocr-space", apiKey);
-  const ocrPass = await recognizeWithBestEngine(
-    provider,
-    preprocessed,
-    options.fromKey,
-  );
+  const ocrPass = await recognizeWithBestEngine(provider, preprocessed);
 
   const words = scaleOcrWordsToOriginal(
     ocrPass.words,
@@ -149,12 +146,11 @@ export async function analyzeLeadSheetImage(
     ocrPass.imageHeight,
   );
 
-  const chordWords = selectChordOcrWords(words, options.fromKey);
+  const chordWords = selectChordOcrWords(words);
   const keyFilter = options.fromKey
     ? createKeyFilter(options.fromKey, "major")
     : null;
 
-  const rawHighlights = extractChordHighlights(chordWords);
   const chordsBeforeKey = extractChordsFromOcr(
     chordWords,
     preprocessed.originalHeight,
@@ -165,34 +161,27 @@ export async function analyzeLeadSheetImage(
   );
 
   let chords = chordsBeforeKey;
-  let wordHighlights = rawHighlights;
   let keyFilterStats: KeyFilterStats | undefined;
 
   if (keyFilter) {
-    wordHighlights = applyKeyFilterToHighlights(rawHighlights, keyFilter);
     const filtered = applyKeyFilterToChords(chordsBeforeKey, keyFilter, {
       semitones: options.semitones ?? 0,
       preferFlats: options.preferFlats ?? false,
     });
     chords = filtered.chords;
-    keyFilterStats = {
-      ...filtered.stats,
-      rejectedTokens:
-        filtered.stats.rejectedTokens +
-        Math.max(0, rawHighlights.length - wordHighlights.length),
-    };
+    keyFilterStats = filtered.stats;
   }
 
+  const tokenHighlights = extractChordHighlights(chordWords);
   const highlights = mergeHighlights(
-    wordHighlights,
-    chords.map((chord) => ({
-      text: chord.original,
-      normalized: chord.original,
-      bbox: chord.bbox,
-      confidence: chord.confidence,
-      isParsedChord: true,
-      parsed: chord.original,
-    })),
+    highlightsFromChords(chords),
+    tokenHighlights.filter((item) =>
+      chords.some(
+        (chord) =>
+          item.parsed === chord.original ||
+          item.normalized === chord.original,
+      ),
+    ),
   );
 
   return {

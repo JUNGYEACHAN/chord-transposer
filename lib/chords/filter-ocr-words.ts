@@ -1,12 +1,7 @@
 import type { OcrWord } from "../ocr/types";
 import { isChordLikeToken } from "./highlights";
-import {
-  createKeyFilter,
-  type KeyFilterContext,
-} from "./key-filter";
-import { isTokenCompatibleWithKey } from "./key-theory";
 import { normalizeOcrText } from "./parser";
-import type { KeyRoot } from "./types";
+import { dedupeOcrWords } from "../ocr/dedupe-words";
 
 interface OcrLine {
   words: OcrWord[];
@@ -63,38 +58,33 @@ function isPureLyricLine(line: OcrLine): boolean {
   return lyricLike >= 3;
 }
 
-function isChordToken(word: OcrWord, keyFilter?: KeyFilterContext): boolean {
+function isChordToken(word: OcrWord): boolean {
   const normalized = normalizeOcrText(word.text);
   if (!normalized || isSectionLabelToken(normalized)) return false;
-  if (!isChordLikeToken(normalized)) return false;
-  if (keyFilter) {
-    return isTokenCompatibleWithKey(
-      normalized,
-      keyFilter.ctx,
-      keyFilter.vocabulary,
-    );
-  }
-  return true;
+  return isChordLikeToken(normalized);
 }
 
-/** Keep OCR tokens likely to belong to chord rows (not lyrics or section labels). */
-export function selectChordOcrWords(
-  words: OcrWord[],
-  fromKey?: KeyRoot,
-): OcrWord[] {
-  const keyFilter = fromKey ? createKeyFilter(fromKey, "major") : undefined;
+/**
+ * Keep OCR tokens likely to belong to chord rows.
+ * Key filtering is applied later on merged chords — not here — so fragments
+ * like "F" + "#" + "sus4" survive long enough to assemble F#sus4.
+ */
+export function selectChordOcrWords(words: OcrWord[]): OcrWord[] {
   const lines = groupIntoLines(words);
   const selected: OcrWord[] = [];
 
   for (const line of lines) {
-    const chordWords = line.words.filter((word) => isChordToken(word, keyFilter));
+    const chordWords = line.words.filter(isChordToken);
     if (chordWords.length === 0) continue;
     if (isPureLyricLine(line)) continue;
 
     selected.push(...chordWords);
   }
 
-  if (selected.length > 0) return selected;
+  const globalCandidates = words.filter(isChordToken);
+  const merged = dedupeOcrWords([...selected, ...globalCandidates]);
 
-  return words.filter((word) => isChordToken(word, keyFilter));
+  if (merged.length > 0) return merged;
+
+  return globalCandidates;
 }

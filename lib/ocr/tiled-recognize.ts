@@ -3,8 +3,8 @@ import type { PreprocessedImage } from "../images/preprocess-for-ocr";
 import { dedupeOcrWords } from "./dedupe-words";
 import type { OcrProvider, OcrWord } from "./types";
 
-const TILE_HEIGHT = 1100;
-const TILE_OVERLAP = 180;
+const TILE_HEIGHT = 1000;
+const TILE_OVERLAP = 250;
 
 interface TiledOcrResult {
   words: OcrWord[];
