@@ -132,11 +132,11 @@ function clusterStaffLineRows(
   let group: number[] = [lineYs[0]];
 
   const flush = () => {
-    const strong = group.filter((y) => profiles[y].lineScore >= 0.26);
+    const strong = group.filter((y) => profiles[y].lineScore >= 0.22);
 
     if (strong.length >= 3) {
-      const span = strong[strong.length - 1] - strong[0];
-      if (span >= 10 && span <= maxStaffHeight) {
+      const span = group[group.length - 1] - group[0];
+      if (span >= 6 && span <= maxStaffHeight) {
         systems.push({
           top: strong[0],
           bottom: strong[strong.length - 1],
@@ -327,11 +327,14 @@ export function detectChordBandAboveStaff(
 
   if (safeBottom <= top) return null;
 
+  const bandHeight = safeBottom - top + 1;
+  const minHeight = Math.max(10, Math.round(height * 0.012));
+
   return {
     left: 0,
     top,
     width,
-    height: safeBottom - top + 1,
+    height: Math.max(bandHeight, minHeight),
     kind: "above-staff",
   };
 }

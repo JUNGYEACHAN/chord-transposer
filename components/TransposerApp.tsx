@@ -124,21 +124,6 @@ export default function TransposerApp() {
     return () => revokePreviewUrl();
   }, [revokePreviewUrl]);
 
-  const redrawAnalysisCanvas = useCallback(
-    async (nextHighlights: ChordHighlight[] = highlights) => {
-      const canvas = analysisCanvasRef.current;
-      if (!canvas || !previewUrl || !zoneDetection) return;
-
-      const image = await loadImage(previewUrl);
-      drawAnalysisPreview(canvas, image, {
-        bands: zoneDetection.bands,
-        highlights: nextHighlights,
-        staffSystems: zoneDetection.staffSystems,
-      });
-    },
-    [highlights, previewUrl, zoneDetection],
-  );
-
   useEffect(() => {
     if (!previewUrl) return;
 
@@ -153,16 +138,17 @@ export default function TransposerApp() {
         if (cancelled) return;
 
         setZoneDetection(detection);
-
-        const canvas = analysisCanvasRef.current;
-        if (canvas) {
-          drawAnalysisPreview(canvas, image, {
-            bands: detection.bands,
-            staffSystems: detection.staffSystems,
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Chord zone detection failed:", err);
+          setZoneDetection({
+            bands: [],
+            method: "no-staff-found",
+            staffCount: 0,
+            staffSystems: [],
+            chordRowCount: 0,
           });
         }
-      } catch {
-        /* zone preview is best-effort */
       }
     })();
 
@@ -172,9 +158,22 @@ export default function TransposerApp() {
   }, [previewUrl]);
 
   useEffect(() => {
-    if (!analysis) return;
-    void redrawAnalysisCanvas(highlights);
-  }, [analysis, highlights, redrawAnalysisCanvas]);
+    if (!previewUrl || !zoneDetection) return;
+
+    void (async () => {
+      const canvas = analysisCanvasRef.current;
+      if (!canvas) return;
+
+      const image = await loadImage(previewUrl);
+      drawAnalysisPreview(canvas, image, {
+        bands: zoneDetection.bands,
+        highlights,
+        staffSystems: zoneDetection.staffSystems,
+      });
+    })().catch((err) => {
+      console.error("Analysis preview draw failed:", err);
+    });
+  }, [previewUrl, zoneDetection, highlights]);
 
   useEffect(() => {
     if (!transposed || !previewUrl) return;
